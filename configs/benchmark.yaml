@@ -4,7 +4,7 @@ defaults:
 data:
   campaign: dc-extern-2026-01
   processing_version: null
-  split_dir: /Users/michielghesquiere/projects/distrimuse/distrimuse-early-fusion/cache/datasets/v35/imu
+  split_dir: ../distrimuse-early-fusion/cache/datasets/v35/imu
   manifest_path: null
   cache_dir: cache
   window_cache_dir: cache/windows
