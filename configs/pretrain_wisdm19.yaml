@@ -1,0 +1,41 @@
+data:
+  campaign: wisdm19
+  processing_version: null
+  split_dir: cache/public/wisdm19/splits/watch_accel_gyro
+  manifest_path: null
+  cache_dir: cache
+  window_cache_dir: cache/windows/wisdm19
+  window_size_s: 2.0
+  hop_size_s: 0.5
+  context_len: 8
+  task_col: wisdm_activity_id
+  n_classes: 18
+  sensor_cols: [acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z]
+  batch_size: 128
+  num_workers: 4
+  reuse_window_cache: true
+  split:
+    train_ids: [1600, 1601, 1602, 1603, 1604, 1605, 1606, 1607, 1608, 1609, 1610, 1611, 1612, 1613, 1614, 1615, 1616, 1617, 1618, 1619, 1620, 1621, 1622, 1623, 1624, 1625, 1626, 1627, 1628, 1629, 1630, 1631, 1632, 1633, 1634, 1635, 1636, 1637, 1638, 1639]
+    val_ids: [1640, 1641, 1642, 1643, 1644]
+    test_ids: [1645, 1646, 1647, 1648, 1649, 1650]
+    scenario_ids: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+
+train:
+  max_epochs: 30
+  lr: 0.001
+  weight_decay: 0.0001
+  seed: 42
+  device: auto
+  early_stop_patience: 8
+  output_root: experiments/results
+  run_name: null
+  width_mult: 0.5
+  distillation:
+    temperature: 4.0
+    alpha: 0.5
+
+benchmark:
+  models:
+    - edge_cnn
+    - edge_tcn
+  width_multipliers: [0.25, 0.5, 1.0]

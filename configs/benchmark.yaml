@@ -1,0 +1,41 @@
+defaults:
+  split: configs/split.yaml
+
+data:
+  campaign: dc-extern-2026-01
+  processing_version: null
+  split_dir: /Users/michielghesquiere/projects/distrimuse/distrimuse-early-fusion/cache/datasets/v35/imu
+  manifest_path: null
+  cache_dir: cache
+  window_cache_dir: cache/windows
+  window_size_s: 2.0
+  hop_size_s: 0.5
+  context_len: 8
+  task_col: big_movement
+  n_classes: 9
+  sensor_cols: [acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z]
+  batch_size: 128
+  num_workers: 4
+  reuse_window_cache: true
+
+train:
+  max_epochs: 30
+  lr: 0.001
+  weight_decay: 0.0001
+  seed: 42
+  device: auto
+  early_stop_patience: 8
+  output_root: experiments/results
+  run_name: null
+  width_mult: 0.5
+  log_every_n_batches: 10
+  distillation:
+    temperature: 4.0
+    alpha: 0.5
+
+benchmark:
+  models:
+    - teacher_causal_cnn
+    - edge_cnn
+    - edge_tcn
+  width_multipliers: [0.25, 0.5, 1.0]

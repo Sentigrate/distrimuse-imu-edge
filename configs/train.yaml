@@ -1,0 +1,15 @@
+train:
+  max_epochs: 30
+  lr: 0.001
+  weight_decay: 0.0001
+  batch_size: 128
+  seed: 42
+  device: auto
+  early_stop_patience: 8
+  output_root: experiments/results
+  run_name: null
+  width_mult: 0.5
+  log_every_n_batches: 10
+  distillation:
+    temperature: 4.0
+    alpha: 0.5

@@ -1,0 +1,16 @@
+data:
+  campaign: dc-extern-2026-01
+  processing_version: null
+  split_dir: null
+  manifest_path: null
+  cache_dir: cache
+  window_cache_dir: cache/windows
+  window_size_s: 2.0
+  hop_size_s: 0.5
+  context_len: 8
+  task_col: big_movement
+  n_classes: 9
+  sensor_cols: [acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z]
+  batch_size: 128
+  num_workers: 4
+  reuse_window_cache: true
