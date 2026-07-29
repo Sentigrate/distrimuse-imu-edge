@@ -5,7 +5,7 @@ from pathlib import Path
 
 from distrimuse_imu_edge.cli.common import (
     default_run_name,
-    effective_context_len_for,
+    effective_context_lengths_for,
     load_runtime_config,
     model_kwargs_for,
 )
@@ -21,6 +21,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--width-mult", type=float, default=None)
     parser.add_argument("--max-epochs", type=int, default=None)
+    parser.add_argument(
+        "--context-len",
+        type=int,
+        default=None,
+        help="Past plus current windows. For example, 8 means 7 past + current.",
+    )
+    parser.add_argument(
+        "--future-context-len",
+        type=int,
+        default=None,
+        help="Future look-ahead windows. Default: data.future_context_len from config.",
+    )
     parser.add_argument(
         "--device",
         default=None,
@@ -49,8 +61,16 @@ def main() -> None:
         train_cfg.device = args.device
     if args.log_every_n_batches is not None:
         train_cfg.log_every_n_batches = args.log_every_n_batches
+    if args.context_len is not None:
+        data_cfg.context_len = args.context_len
+    if args.future_context_len is not None:
+        data_cfg.future_context_len = args.future_context_len
     width_mult = args.width_mult if args.width_mult is not None else train_cfg.width_mult
-    data_cfg.context_len = effective_context_len_for(args.model, data_cfg.context_len)
+    data_cfg.context_len, data_cfg.future_context_len = effective_context_lengths_for(
+        args.model,
+        data_cfg.context_len,
+        data_cfg.future_context_len,
+    )
     model_kwargs = model_kwargs_for(args.model, data_cfg=data_cfg, width_mult=width_mult)
     model = build_model(args.model, **model_kwargs)
     transfer_report = None
@@ -59,7 +79,10 @@ def main() -> None:
     dm = IMUEdgeDataModule(data_cfg)
     dm.setup()
     run_name = args.run_name or train_cfg.run_name or default_run_name(
-        args.model, width_mult=width_mult, context_len=data_cfg.context_len
+        args.model,
+        width_mult=width_mult,
+        context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
     )
     output_dir = Path(train_cfg.output_root) / run_name
     resolved["data"] = data_cfg.to_dict()

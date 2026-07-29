@@ -50,6 +50,7 @@ def main() -> None:
         model_name,
         width_mult=float(model_kwargs.get("width_mult", train_cfg.width_mult)),
         context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
         suffix=args.method,
     )
     output_dir = Path(train_cfg.output_root) / run_name
@@ -83,6 +84,7 @@ def main() -> None:
     stats = compute_model_stats(
         model.to("cpu"),
         context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
         window_size_s=data_cfg.window_size_s,
         n_channels=len(data_cfg.sensor_cols),
         compression=compression,

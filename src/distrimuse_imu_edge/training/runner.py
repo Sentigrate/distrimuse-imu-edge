@@ -144,7 +144,8 @@ def _log_dataset_summary(datamodule: IMUEdgeDataModule) -> None:
     cfg = datamodule.config
     tqdm.write(
         "Dataset | "
-        f"window={cfg.window_size_s:g}s | hop={cfg.hop_size_s:g}s | context={cfg.context_len} | "
+        f"window={cfg.window_size_s:g}s | hop={cfg.hop_size_s:g}s | "
+        f"past+current={cfg.context_len} | future={cfg.future_context_len} | "
         f"channels={len(cfg.sensor_cols)} ({','.join(cfg.sensor_cols)}) | classes={cfg.n_classes}"
     )
     for split_name in ("train", "val", "test"):
@@ -386,6 +387,7 @@ def train_model(
     stats = compute_model_stats(
         model.to("cpu"),
         context_len=datamodule.config.context_len,
+        future_context_len=datamodule.config.future_context_len,
         window_size_s=datamodule.config.window_size_s,
         n_channels=len(datamodule.config.sensor_cols),
         compression=compression,

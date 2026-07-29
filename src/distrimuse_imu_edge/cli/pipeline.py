@@ -76,7 +76,12 @@ def _run_teacher(
     skip_existing: bool,
 ) -> Path:
     wm = 1.0
-    run_name = default_run_name("teacher_causal_cnn", width_mult=wm, context_len=data_cfg.context_len)
+    run_name = default_run_name(
+        "teacher_causal_cnn",
+        width_mult=wm,
+        context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
+    )
     ckpt = output_root / run_name / "checkpoints" / "best.ckpt"
 
     if ckpt.exists() and skip_existing:
@@ -117,7 +122,13 @@ def _run_distill(
     skip_existing: bool,
     step: str,
 ) -> Path:
-    run_name = default_run_name(student, width_mult=wm, context_len=data_cfg.context_len, suffix="distilled")
+    run_name = default_run_name(
+        student,
+        width_mult=wm,
+        context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
+        suffix="distilled",
+    )
     ckpt = output_root / run_name / "checkpoints" / "best.ckpt"
 
     if ckpt.exists() and skip_existing:
@@ -171,7 +182,11 @@ def _run_quantize(
         return
 
     run_name = default_run_name(
-        student_name, width_mult=wm, context_len=data_cfg.context_len, suffix="dynamic_quant"
+        student_name,
+        width_mult=wm,
+        context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
+        suffix="dynamic_quant",
     )
     out = output_root / run_name
     if (out / "checkpoints" / "best.ckpt").exists() and skip_existing:
@@ -203,6 +218,7 @@ def _run_quantize(
     stats = compute_model_stats(
         model,
         context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
         window_size_s=data_cfg.window_size_s,
         n_channels=len(data_cfg.sensor_cols),
         compression=compression,

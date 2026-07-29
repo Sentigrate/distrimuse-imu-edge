@@ -11,6 +11,17 @@ except Exception:  # pragma: no cover
     BIG_MOVEMENT_CLASS_NAMES = [str(i) for i in range(9)]
 
 
+def class_names_for(n_classes: int, *, task_col: str = "big_movement") -> list[str]:
+    if task_col == "big_movement":
+        return [
+            BIG_MOVEMENT_CLASS_NAMES[index]
+            if index < len(BIG_MOVEMENT_CLASS_NAMES)
+            else str(index)
+            for index in range(n_classes)
+        ]
+    return [str(index) for index in range(n_classes)]
+
+
 @torch.no_grad()
 def collect_predictions(model: torch.nn.Module, loader, *, device: torch.device) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
@@ -38,7 +49,7 @@ def classification_report_payload(
     prefix: str = "test",
 ) -> dict:
     labels = list(range(n_classes))
-    class_names = list(BIG_MOVEMENT_CLASS_NAMES[:n_classes])
+    class_names = class_names_for(n_classes)
     per_class = f1_score(y_true, y_pred, labels=labels, average=None, zero_division=0)
     macro = f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)
     cm = confusion_matrix(y_true, y_pred, labels=labels)

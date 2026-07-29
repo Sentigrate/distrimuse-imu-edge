@@ -7,6 +7,9 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from distrimuse_imu_edge.evaluation.artifacts import write_test_prediction_artifacts
+from distrimuse_imu_edge.evaluation.metrics import class_names_for
+
 
 def write_run_reports(
     *,
@@ -24,6 +27,18 @@ def write_run_reports(
     (reports / "model_stats.json").write_text(json.dumps(model_stats, indent=2), encoding="utf-8")
     predictions.to_parquet(reports / "predictions.parquet", index=False)
     (reports / "config.resolved.yaml").write_text(yaml.safe_dump(resolved_config, sort_keys=False), encoding="utf-8")
+    data_config = resolved_config.get("data", {}) or {}
+    probability_columns = [column for column in predictions if column.startswith("prob_")]
+    inferred_n_classes = len(probability_columns)
+    if not inferred_n_classes and not predictions.empty:
+        inferred_n_classes = int(predictions[["y_true", "y_pred"]].to_numpy().max()) + 1
+    n_classes = int(data_config.get("n_classes", inferred_n_classes))
+    write_test_prediction_artifacts(
+        output_dir=output_dir,
+        predictions=predictions,
+        class_names=class_names_for(n_classes, task_col=str(data_config.get("task_col", "big_movement"))),
+        hop_size_s=float(data_config.get("hop_size_s", 1.0)),
+    )
     _write_minimal_plot_index(plots / "index.html", metrics=metrics, stats=model_stats)
 
 
@@ -40,6 +55,14 @@ def _write_minimal_plot_index(path: Path, *, metrics: dict[str, Any], stats: dic
         test = metrics.get("wisdm_test_macro_f1")
     gflops = stats.get("gflops")
     size = stats.get("model_size_mb")
+    timeline_links = [
+        f"<li><a href='{item.name}'>{item.stem.replace('_', ' ')}</a></li>"
+        for item in sorted(path.parent.glob("prediction_timeline_subject_*.html"))
+    ]
+    confusion_links = [
+        f"<li><a href='../confusion_matrices/{item.name}'>{item.stem.replace('_', ' ')}</a></li>"
+        for item in sorted((path.parent.parent / "confusion_matrices").glob("*.html"))
+    ]
     path.write_text(
         "\n".join(
             [
@@ -49,6 +72,10 @@ def _write_minimal_plot_index(path: Path, *, metrics: dict[str, Any], stats: dic
                 f"<p>{test_label}: {test}</p>",
                 f"<p>GFLOPs: {gflops}</p>",
                 f"<p>model size MB: {size}</p>",
+                "<h2>Confusion matrices</h2>",
+                f"<ul>{''.join(confusion_links)}</ul>",
+                "<h2>Prediction timelines</h2>",
+                f"<ul>{''.join(timeline_links)}</ul>",
             ]
         ),
         encoding="utf-8",

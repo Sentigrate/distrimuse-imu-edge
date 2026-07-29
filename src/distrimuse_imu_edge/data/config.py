@@ -11,6 +11,8 @@ DEFAULT_VAL_IDS = [1, 3, 6]
 DEFAULT_TEST_IDS = [8, 15, 24, 26, 27]
 DEFAULT_SCENARIO_IDS = [1, 2, 3, 4, 5, 6]
 DEFAULT_SENSOR_COLS = ("acc_x", "acc_y", "acc_z", "gyr_x", "gyr_y", "gyr_z")
+DEFAULT_WINDOW_SIZE_S = 3.0
+DEFAULT_HOP_SIZE_S = 1.0
 
 
 @dataclass(slots=True)
@@ -33,9 +35,10 @@ class DataConfig:
     manifest_path: Path | None = None
     cache_dir: Path = Path("cache")
     window_cache_dir: Path = Path("cache/windows")
-    window_size_s: float = 2.0
-    hop_size_s: float = 0.5
+    window_size_s: float = DEFAULT_WINDOW_SIZE_S
+    hop_size_s: float = DEFAULT_HOP_SIZE_S
     context_len: int = 8
+    future_context_len: int = 0
     task_col: str = "big_movement"
     n_classes: int = 9
     sensor_cols: tuple[str, ...] = DEFAULT_SENSOR_COLS
@@ -43,6 +46,10 @@ class DataConfig:
     num_workers: int = 4
     reuse_window_cache: bool = True
     split: SplitConfig = field(default_factory=SplitConfig)
+
+    @property
+    def total_context_len(self) -> int:
+        return self.context_len + self.future_context_len
 
     def to_dict(self) -> dict[str, Any]:
         out = asdict(self)
@@ -99,9 +106,10 @@ def data_config_from_mapping(payload: dict[str, Any], *, base_dir: Path | None =
         manifest_path=_as_path(data.get("manifest_path")),
         cache_dir=_as_path(data.get("cache_dir")) or Path("cache"),
         window_cache_dir=_as_path(data.get("window_cache_dir")) or Path("cache/windows"),
-        window_size_s=float(data.get("window_size_s", 2.0)),
-        hop_size_s=float(data.get("hop_size_s", 0.5)),
+        window_size_s=float(data.get("window_size_s", DEFAULT_WINDOW_SIZE_S)),
+        hop_size_s=float(data.get("hop_size_s", DEFAULT_HOP_SIZE_S)),
         context_len=int(data.get("context_len", 8)),
+        future_context_len=int(data.get("future_context_len", 0)),
         task_col=str(data.get("task_col", "big_movement")),
         n_classes=int(data.get("n_classes", 9)),
         sensor_cols=tuple(data.get("sensor_cols", DEFAULT_SENSOR_COLS)),

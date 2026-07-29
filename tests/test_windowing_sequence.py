@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from distrimuse_imu_edge.data.sequence import CausalSequenceWindowDataset
+from distrimuse_imu_edge.data.sequence import CausalSequenceWindowDataset, SequenceWindowDataset
 from distrimuse_imu_edge.data.windowing import build_raw_window_dataset
 
 
@@ -48,3 +48,25 @@ def test_causal_context_does_not_cross_scenario_boundary() -> None:
 
     assert int(current_y) == 2
     assert context_y.tolist() == [-1, -1, 2]
+
+
+def test_future_context_surrounds_current_without_crossing_boundary() -> None:
+    x = np.arange(6, dtype=np.float32).reshape(6, 1, 1)
+    y = np.arange(6, dtype=np.int64)
+    pids = np.ones(6, dtype=np.int64)
+    sids = np.array([1, 1, 1, 1, 2, 2])
+    ds = SequenceWindowDataset(
+        x,
+        y,
+        pids,
+        sids,
+        context_len=3,
+        future_context_len=2,
+    )
+
+    x_seq, current_y, context_y = ds[2]
+
+    assert x_seq.shape == (5, 1, 1)
+    assert int(current_y) == 2
+    assert context_y.tolist() == [0, 1, 2, 3, -1]
+    assert x_seq[:, 0, 0].tolist() == [0.0, 1.0, 2.0, 3.0, 0.0]

@@ -39,7 +39,11 @@ def main() -> None:
     dm = IMUEdgeDataModule(data_cfg)
     dm.setup()
     run_name = args.run_name or train_cfg.run_name or default_run_name(
-        args.student, width_mult=width_mult, context_len=data_cfg.context_len, suffix="distilled"
+        args.student,
+        width_mult=width_mult,
+        context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
+        suffix="distilled",
     )
     output_dir = Path(train_cfg.output_root) / run_name
     resolved["train"] = train_cfg.to_dict()

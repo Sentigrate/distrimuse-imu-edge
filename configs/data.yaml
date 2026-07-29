@@ -5,9 +5,10 @@ data:
   manifest_path: null
   cache_dir: cache
   window_cache_dir: cache/windows
-  window_size_s: 2.0
-  hop_size_s: 0.5
+  window_size_s: 3.0
+  hop_size_s: 1.0
   context_len: 8
+  future_context_len: 0
   task_col: big_movement
   n_classes: 9
   sensor_cols: [acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z]

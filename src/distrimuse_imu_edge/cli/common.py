@@ -28,6 +28,16 @@ def effective_context_len_for(model_name: str, configured_context_len: int) -> i
     return configured_context_len
 
 
+def effective_context_lengths_for(
+    model_name: str,
+    configured_context_len: int,
+    configured_future_context_len: int,
+) -> tuple[int, int]:
+    if model_name in SINGLE_WINDOW_MODELS:
+        return 1, 0
+    return configured_context_len, configured_future_context_len
+
+
 def model_kwargs_for(model_name: str, *, data_cfg: DataConfig, width_mult: float) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "n_classes": data_cfg.n_classes,
@@ -35,12 +45,21 @@ def model_kwargs_for(model_name: str, *, data_cfg: DataConfig, width_mult: float
         "width_mult": width_mult,
     }
     if model_name in {"teacher_causal_cnn", "causal_context_transformer_cnn"}:
-        kwargs["context_len"] = data_cfg.context_len
+        kwargs["context_len"] = data_cfg.total_context_len
     return kwargs
 
 
-def default_run_name(model_name: str, *, width_mult: float, context_len: int, suffix: str | None = None) -> str:
+def default_run_name(
+    model_name: str,
+    *,
+    width_mult: float,
+    context_len: int,
+    future_context_len: int = 0,
+    suffix: str | None = None,
+) -> str:
     base = f"{model_name}_wm{width_mult:g}_ctx{context_len}"
+    if future_context_len:
+        base = f"{base}_future{future_context_len}"
     return f"{base}_{suffix}" if suffix else base
 
 

@@ -92,11 +92,13 @@ with this layout:
 processed/{campaign}/imu/{processing_version}/person_{id}/scenario_{id}/data.parquet
 ```
 
-The loader creates 2-second windows every 0.5 seconds by default, resamples each
+The loader creates 3-second windows every 1 second by default, resamples each
 window to the expected sample count, assigns labels by majority vote, and fits
-channel normalization on the training windows only. Causal models receive
-`data.context_len` consecutive windows; single-window baselines such as
-`cnn_har` and `tinierhar` force `context_len=1`.
+channel normalization on the training windows only. `data.context_len` includes
+the current window (for example, `8` means seven past windows plus the current
+window). `data.future_context_len` optionally adds look-ahead windows; its
+default is `0`. Single-window baselines such as `cnn_har` and `tinierhar` force
+both settings to `1` and `0`, respectively.
 
 ## Common Workflows
 
@@ -124,6 +126,25 @@ uv run imu-edge-train --config configs/benchmark.yaml --model edge_cnn --width-m
 uv run imu-edge-train --config configs/benchmark.yaml --model teacher_causal_cnn --max-epochs 5
 uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn --device cpu
 ```
+
+Compare Edge TCN context modes:
+
+```bash
+# Current window only
+uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn \
+  --context-len 1 --future-context-len 0 --run-name edge_tcn_current
+
+# Seven past windows plus current
+uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn \
+  --context-len 8 --future-context-len 0 --run-name edge_tcn_past7_current
+
+# Seven past windows, current, and seven future windows
+uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn \
+  --context-len 8 --future-context-len 7 --run-name edge_tcn_past7_current_future7
+```
+
+Future context is non-causal: with the default one-second hop, seven future
+windows add seven seconds of decision delay.
 
 ### 3. Run the Teacher-Student Benchmark Pipeline
 
@@ -241,7 +262,12 @@ reports/metrics.json
 reports/model_stats.json
 reports/predictions.parquet
 reports/config.resolved.yaml
-plots/
+reports/test_per_subject_metrics.{json,csv}
+confusion_matrices/test_all_subjects.html
+confusion_matrices/test_subject_{person_id}.html
+confusion_matrices/test_subjects_overview.html
+plots/prediction_timeline_subject_{person_id}.html
+plots/index.html
 ```
 
 The aggregate benchmark command writes:
@@ -263,9 +289,10 @@ Main knobs live under `data`, `train`, and `benchmark` in `configs/*.yaml`.
 
 Important defaults in `configs/benchmark.yaml`:
 
-- `data.window_size_s: 2.0`
-- `data.hop_size_s: 0.5`
+- `data.window_size_s: 3.0`
+- `data.hop_size_s: 1.0`
 - `data.context_len: 8`
+- `data.future_context_len: 0`
 - `data.task_col: big_movement`
 - `data.n_classes: 9`
 - `train.max_epochs: 30`

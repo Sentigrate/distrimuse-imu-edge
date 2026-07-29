@@ -66,6 +66,7 @@ def compute_model_stats(
     model: nn.Module,
     *,
     context_len: int,
+    future_context_len: int = 0,
     window_size_s: float,
     n_channels: int,
     fs: int = 104,
@@ -75,8 +76,9 @@ def compute_model_stats(
     """Compute a full efficiency profile for a trained model.
 
     Constructs a dummy input with the same shape as real inference — one batch,
-    ``context_len`` windows, each containing ``window_size_s * fs`` time steps
-    across ``n_channels`` sensor channels — then runs three measurements:
+    ``context_len + future_context_len`` windows, each containing
+    ``window_size_s * fs`` time steps across ``n_channels`` sensor channels —
+    then runs three measurements:
 
     **Parameter count**
         Counted directly from ``model.parameters()``. Trainable parameters
@@ -102,7 +104,8 @@ def compute_model_stats(
 
     Args:
         model: Trained model. Will be moved to CPU and set to eval mode.
-        context_len: Number of context windows fed per prediction.
+        context_len: Number of past-plus-current windows fed per prediction.
+        future_context_len: Number of future look-ahead windows.
         window_size_s: Duration of each window in seconds.
         n_channels: Number of input sensor channels (e.g. 6 for IMU).
         fs: Sampling frequency in Hz (default 104 Hz for this dataset).
@@ -115,8 +118,9 @@ def compute_model_stats(
     """
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
+    total_context_len = context_len + future_context_len
     t = int(round(window_size_s * fs))
-    sample = torch.zeros(1, context_len, t, n_channels, dtype=torch.float32)
+    sample = torch.zeros(1, total_context_len, t, n_channels, dtype=torch.float32)
     model_cpu = model.to("cpu").eval()
 
     macs: int | None = None
@@ -137,7 +141,9 @@ def compute_model_stats(
         "gmacs": None if macs is None else round(macs / 1e9, 6),
         "gflops": None if macs is None else round(macs / 1e9, 6),
         "context_len": int(context_len),
-        "input_shape": [1, int(context_len), t, int(n_channels)],
+        "future_context_len": int(future_context_len),
+        "total_context_len": int(total_context_len),
+        "input_shape": [1, int(total_context_len), t, int(n_channels)],
         "compression": compression or {"method": "none"},
     }
     stats.update(_cpu_latency_ms(model_cpu, sample, repeats=latency_repeats))

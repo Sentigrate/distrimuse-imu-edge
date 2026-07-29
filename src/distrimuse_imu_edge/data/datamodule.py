@@ -7,7 +7,7 @@ import pandas as pd
 from torch.utils.data import DataLoader
 
 from distrimuse_imu_edge.data.config import DataConfig
-from distrimuse_imu_edge.data.sequence import CausalSequenceWindowDataset
+from distrimuse_imu_edge.data.sequence import SequenceWindowDataset
 from distrimuse_imu_edge.data.windowing import (
     ChannelNormalizer,
     build_raw_window_dataset,
@@ -23,7 +23,7 @@ class IMUEdgeDataModule:
     def __init__(self, config: DataConfig) -> None:
         self.config = config
         self.normalizer = ChannelNormalizer()
-        self.datasets: dict[str, CausalSequenceWindowDataset] = {}
+        self.datasets: dict[str, SequenceWindowDataset] = {}
         self.class_weights: np.ndarray | None = None
 
     def setup(self) -> None:
@@ -48,12 +48,13 @@ class IMUEdgeDataModule:
 
         for split_name, (x, y, pids, sids, starts) in arrays.items():
             x_norm = self.normalizer.transform(x) if len(x) else x
-            self.datasets[split_name] = CausalSequenceWindowDataset(
+            self.datasets[split_name] = SequenceWindowDataset(
                 x_norm,
                 y,
                 pids,
                 sids,
                 context_len=self.config.context_len,
+                future_context_len=self.config.future_context_len,
                 window_starts_s=starts,
             )
 
