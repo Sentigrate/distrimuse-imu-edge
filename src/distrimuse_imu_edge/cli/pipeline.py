@@ -209,8 +209,20 @@ def _run_quantize(
     )
     predictions = pd.concat(
         [
-            predictions_frame("val", val_true, val_pred, val_prob, dm.split_metadata("val")),
-            predictions_frame("test", test_true, test_pred, test_prob, dm.split_metadata("test")),
+            predictions_frame(
+                split="val",
+                y_true=val_true,
+                y_pred=val_pred,
+                y_prob=val_prob,
+                metadata=dm.split_metadata("val"),
+            ),
+            predictions_frame(
+                split="test",
+                y_true=test_true,
+                y_pred=test_pred,
+                y_prob=test_prob,
+                metadata=dm.split_metadata("test"),
+            ),
         ],
         ignore_index=True,
     )
