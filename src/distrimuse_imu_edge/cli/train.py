@@ -25,13 +25,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--context-len",
         type=int,
         default=None,
-        help="Past plus current windows. For example, 8 means 7 past + current.",
+        help=(
+            "Past plus current windows. For example, 8 means 7 past + current. "
+            "Forced to 1 for single-window models."
+        ),
     )
     parser.add_argument(
         "--future-context-len",
         type=int,
         default=None,
-        help="Future look-ahead windows. Default: data.future_context_len from config.",
+        help=(
+            "Future look-ahead windows. Default: data.future_context_len from config. "
+            "Forced to 0 for single-window models."
+        ),
     )
     parser.add_argument(
         "--device",

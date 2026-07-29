@@ -10,7 +10,13 @@ from distrimuse_imu_edge.models import build_model
 
 
 def test_efficiency_report_contains_edge_metrics() -> None:
-    model = build_model("edge_cnn", n_classes=3, input_channels=6, width_mult=0.25)
+    model = build_model(
+        "edge_window_tcn",
+        n_classes=3,
+        input_channels=6,
+        width_mult=0.25,
+        current_index=7,
+    )
     stats = compute_model_stats(model, context_len=8, window_size_s=0.2, n_channels=6, fs=100, latency_repeats=2)
 
     assert stats["total_params"] > 0

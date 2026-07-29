@@ -37,6 +37,6 @@ train:
 
 benchmark:
   models:
-    - edge_cnn
-    - edge_tcn
+    - edge_window_gru
+    - edge_window_tcn
   width_multipliers: [0.25, 0.5, 1.0]

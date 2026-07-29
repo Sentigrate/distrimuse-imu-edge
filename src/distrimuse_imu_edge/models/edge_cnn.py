@@ -3,13 +3,13 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from distrimuse_imu_edge.models.base import ContextConvMixin, make_width
+from distrimuse_imu_edge.models.base import CurrentWindowMixin, make_width
 from distrimuse_imu_edge.models.registry import register_model
 
 
 @register_model("edge_cnn")
-class EdgeCNN(nn.Module, ContextConvMixin):
-    """Compact causal-context CNN student."""
+class EdgeCNN(nn.Module, CurrentWindowMixin):
+    """Compact single-window CNN student."""
 
     def __init__(self, n_classes: int = 9, input_channels: int = 6, width_mult: float = 0.5) -> None:
         super().__init__()
@@ -31,4 +31,5 @@ class EdgeCNN(nn.Module, ContextConvMixin):
         self.head = nn.Sequential(nn.Flatten(), nn.Dropout(0.1), nn.Linear(c2, n_classes))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.head(self.features(self.context_signal(x)))
+        signal = self.current_window(x).transpose(1, 2)
+        return self.head(self.features(signal))

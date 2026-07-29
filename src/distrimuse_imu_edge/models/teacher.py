@@ -6,7 +6,7 @@ from distrimuse_imu_edge.models.registry import register_model
 
 @register_model("teacher_causal_cnn")
 class TeacherCausalCNN(CausalContextTransformerCNN):
-    """Default V1 teacher: causal 7-previous-plus-current context transformer."""
+    """Default teacher with explicit current-token temporal classification."""
 
     def __init__(self, **kwargs) -> None:
         kwargs.setdefault("context_len", 8)

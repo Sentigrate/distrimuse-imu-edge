@@ -8,7 +8,15 @@ import yaml
 from distrimuse_imu_edge.data.config import DataConfig, load_config
 from distrimuse_imu_edge.training.config import TrainConfig, train_config_from_mapping
 
-SINGLE_WINDOW_MODELS = frozenset({"cnn_har", "tinierhar"})
+SINGLE_WINDOW_MODELS = frozenset({"cnn_har", "tinierhar", "edge_cnn", "edge_tcn"})
+WINDOW_SEQUENCE_MODELS = frozenset(
+    {
+        "teacher_causal_cnn",
+        "causal_context_transformer_cnn",
+        "edge_window_gru",
+        "edge_window_tcn",
+    }
+)
 
 
 def load_runtime_config(config_path: str | Path) -> tuple[DataConfig, TrainConfig, dict[str, Any]]:
@@ -44,6 +52,9 @@ def model_kwargs_for(model_name: str, *, data_cfg: DataConfig, width_mult: float
         "input_channels": len(data_cfg.sensor_cols),
         "width_mult": width_mult,
     }
+    if model_name in WINDOW_SEQUENCE_MODELS:
+        kwargs["current_index"] = data_cfg.context_len - 1
+        kwargs["bidirectional"] = data_cfg.future_context_len > 0
     if model_name in {"teacher_causal_cnn", "causal_context_transformer_cnn"}:
         kwargs["context_len"] = data_cfg.total_context_len
     return kwargs

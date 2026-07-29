@@ -3,7 +3,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from distrimuse_imu_edge.cli.common import default_run_name, load_runtime_config, model_kwargs_for
+from distrimuse_imu_edge.cli.common import (
+    default_run_name,
+    effective_context_lengths_for,
+    load_runtime_config,
+    model_kwargs_for,
+)
 from distrimuse_imu_edge.data.datamodule import IMUEdgeDataModule
 from distrimuse_imu_edge.models import build_model
 from distrimuse_imu_edge.training.distillation import load_teacher
@@ -32,10 +37,23 @@ def main() -> None:
         train_cfg.distillation.temperature = args.temperature
     if args.alpha is not None:
         train_cfg.distillation.alpha = args.alpha
+    data_cfg.context_len, data_cfg.future_context_len = effective_context_lengths_for(
+        args.student,
+        data_cfg.context_len,
+        data_cfg.future_context_len,
+    )
+    resolved["data"] = data_cfg.to_dict()
     width_mult = args.width_mult if args.width_mult is not None else train_cfg.width_mult
     model_kwargs = model_kwargs_for(args.student, data_cfg=data_cfg, width_mult=width_mult)
     student = build_model(args.student, **model_kwargs)
     teacher = load_teacher(args.teacher_checkpoint, device=resolve_device(train_cfg.device))
+    teacher_context_len = getattr(teacher, "context_len", data_cfg.total_context_len)
+    if teacher_context_len != data_cfg.total_context_len:
+        raise ValueError(
+            "Teacher and student data context must match for distillation: "
+            f"teacher expects {teacher_context_len} windows, "
+            f"student data provides {data_cfg.total_context_len}"
+        )
     dm = IMUEdgeDataModule(data_cfg)
     dm.setup()
     run_name = args.run_name or train_cfg.run_name or default_run_name(

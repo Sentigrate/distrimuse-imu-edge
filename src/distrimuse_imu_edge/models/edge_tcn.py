@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from distrimuse_imu_edge.models.base import ContextConvMixin, make_width
+from distrimuse_imu_edge.models.base import CurrentWindowMixin, make_width
 from distrimuse_imu_edge.models.registry import register_model
 
 
@@ -27,8 +27,8 @@ class _ResidualTCNBlock(nn.Module):
 
 
 @register_model("edge_tcn")
-class EdgeTCN(nn.Module, ContextConvMixin):
-    """Residual dilated TCN student for causal context."""
+class EdgeTCN(nn.Module, CurrentWindowMixin):
+    """Residual dilated TCN student for one current window."""
 
     def __init__(self, n_classes: int = 9, input_channels: int = 6, width_mult: float = 0.5) -> None:
         super().__init__()
@@ -48,4 +48,5 @@ class EdgeTCN(nn.Module, ContextConvMixin):
         self.head = nn.Sequential(nn.AdaptiveAvgPool1d(1), nn.Flatten(), nn.Dropout(0.1), nn.Linear(c2, n_classes))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.head(self.tcn(self.stem(self.context_signal(x))))
+        signal = self.current_window(x).transpose(1, 2)
+        return self.head(self.tcn(self.stem(signal)))

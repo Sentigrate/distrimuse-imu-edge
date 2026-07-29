@@ -9,7 +9,12 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from distrimuse_imu_edge.cli.common import default_run_name, load_runtime_config, model_kwargs_for
+from distrimuse_imu_edge.cli.common import (
+    SINGLE_WINDOW_MODELS,
+    default_run_name,
+    load_runtime_config,
+    model_kwargs_for,
+)
 from distrimuse_imu_edge.compression.quantization import apply_dynamic_quantization
 from distrimuse_imu_edge.data.datamodule import IMUEdgeDataModule
 from distrimuse_imu_edge.evaluation.aggregate import aggregate_results
@@ -272,8 +277,17 @@ def main() -> None:
     data_cfg, train_cfg, resolved_base = load_runtime_config(args.config)
 
     bm = resolved_base.get("raw", {}).get("benchmark", {})
-    all_models = bm.get("models", ["teacher_causal_cnn", "edge_cnn", "edge_tcn"])
+    all_models = bm.get(
+        "models",
+        ["teacher_causal_cnn", "edge_window_gru", "edge_window_tcn"],
+    )
     students = args.students or [m for m in all_models if m != "teacher_causal_cnn"]
+    invalid_students = sorted(set(students).intersection(SINGLE_WINDOW_MODELS))
+    if invalid_students:
+        raise ValueError(
+            "The distillation pipeline requires context-capable students; "
+            f"train single-window models separately: {invalid_students}"
+        )
     width_mults = args.width_mults or bm.get("width_multipliers", [0.25, 0.5, 1.0])
     output_root = Path(train_cfg.output_root)
     device = resolve_device(train_cfg.device)

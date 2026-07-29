@@ -49,14 +49,20 @@ def test_one_epoch_training_writes_report_contract(tmp_path) -> None:
     )
     dm = IMUEdgeDataModule(data_cfg)
     dm.setup()
-    model_kwargs = {"n_classes": 3, "input_channels": 6, "width_mult": 0.25}
-    model = build_model("edge_cnn", **model_kwargs)
+    model_kwargs = {
+        "n_classes": 3,
+        "input_channels": 6,
+        "width_mult": 0.25,
+        "current_index": 2,
+        "bidirectional": False,
+    }
+    model = build_model("edge_window_tcn", **model_kwargs)
     train_cfg = TrainConfig(max_epochs=1, early_stop_patience=1, output_root=tmp_path, device="cpu")
     out = tmp_path / "run"
 
     train_model(
         model=model,
-        model_name="edge_cnn",
+        model_name="edge_window_tcn",
         model_kwargs=model_kwargs,
         datamodule=dm,
         train_config=train_cfg,

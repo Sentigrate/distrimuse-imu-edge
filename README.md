@@ -12,7 +12,8 @@ for edge deployment.
 - Builds fixed-length IMU windows from processed Distrimuse parquet data.
 - Trains IMU classifiers for the configured task, currently `big_movement`.
 - Supports causal context models that see the current window plus previous
-  windows, matching streaming inference constraints.
+  windows, matching streaming inference constraints, plus explicit
+  bidirectional look-ahead experiments.
 - Distills a larger teacher into compact student models.
 - Applies compression helpers such as dynamic quantization and structured
   pruning.
@@ -97,8 +98,9 @@ window to the expected sample count, assigns labels by majority vote, and fits
 channel normalization on the training windows only. `data.context_len` includes
 the current window (for example, `8` means seven past windows plus the current
 window). `data.future_context_len` optionally adds look-ahead windows; its
-default is `0`. Single-window baselines such as `cnn_har` and `tinierhar` force
-both settings to `1` and `0`, respectively.
+default is `0`. Single-window models (`edge_cnn`, `edge_tcn`, `cnn_har`, and
+`tinierhar`) force both settings to `1` and `0`, respectively. Use
+`edge_window_gru` or `edge_window_tcn` for temporal context.
 
 ## Common Workflows
 
@@ -115,8 +117,8 @@ uv run pytest
 ```bash
 uv run imu-edge-train \
   --config configs/benchmark.yaml \
-  --model edge_tcn \
-  --run-name edge_tcn_baseline
+  --model edge_window_tcn \
+  --run-name edge_window_tcn_baseline
 ```
 
 Useful overrides:
@@ -127,24 +129,28 @@ uv run imu-edge-train --config configs/benchmark.yaml --model teacher_causal_cnn
 uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn --device cpu
 ```
 
-Compare Edge TCN context modes:
+Compare context modes with a per-window encoder and temporal TCN:
 
 ```bash
 # Current window only
-uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn \
-  --context-len 1 --future-context-len 0 --run-name edge_tcn_current
+uv run imu-edge-train --config configs/benchmark.yaml --model edge_window_tcn \
+  --context-len 1 --future-context-len 0 --run-name edge_window_tcn_current
 
 # Seven past windows plus current
-uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn \
-  --context-len 8 --future-context-len 0 --run-name edge_tcn_past7_current
+uv run imu-edge-train --config configs/benchmark.yaml --model edge_window_tcn \
+  --context-len 8 --future-context-len 0 --run-name edge_window_tcn_past7_current
 
 # Seven past windows, current, and seven future windows
-uv run imu-edge-train --config configs/benchmark.yaml --model edge_tcn \
-  --context-len 8 --future-context-len 7 --run-name edge_tcn_past7_current_future7
+uv run imu-edge-train --config configs/benchmark.yaml --model edge_window_tcn \
+  --context-len 8 --future-context-len 7 \
+  --run-name edge_window_tcn_past7_current_future7
 ```
 
 Future context is non-causal: with the default one-second hop, seven future
-windows add seven seconds of decision delay.
+windows add seven seconds of decision delay. The teacher and window-sequence
+students always classify the explicit current position. They use causal
+aggregation without future context and bidirectional aggregation when future
+context is configured.
 
 ### 3. Run the Teacher-Student Benchmark Pipeline
 
@@ -163,7 +169,7 @@ For a quick smoke run:
 ```bash
 uv run imu-edge-pipeline \
   --config configs/benchmark.yaml \
-  --students edge_tcn \
+  --students edge_window_tcn \
   --width-mults 0.25 \
   --teacher-epochs 1 \
   --student-epochs 1 \
@@ -176,12 +182,12 @@ uv run imu-edge-pipeline \
 uv run imu-edge-distill \
   --config configs/benchmark.yaml \
   --teacher-checkpoint experiments/results/teacher_causal_cnn_wm1_ctx8/checkpoints/best.ckpt \
-  --student edge_tcn \
+  --student edge_window_tcn \
   --width-mult 0.5
 
 uv run imu-edge-compress \
   --config configs/benchmark.yaml \
-  --checkpoint experiments/results/edge_tcn_wm0.5_ctx8_distilled/checkpoints/best.ckpt \
+  --checkpoint experiments/results/edge_window_tcn_wm0.5_ctx8_distilled/checkpoints/best.ckpt \
   --method dynamic_quant
 
 uv run imu-edge-benchmark --results-dir experiments/results
@@ -195,8 +201,8 @@ repository. Once that repo has exported flat split files, use:
 ```bash
 uv run imu-edge-train \
   --config configs/synthetic_augmented.yaml \
-  --model edge_tcn \
-  --run-name edge_tcn_synthetic_augmented
+  --model edge_window_tcn \
+  --run-name edge_window_tcn_synthetic_augmented
 ```
 
 `configs/synthetic_augmented.yaml` points to:
@@ -221,14 +227,14 @@ Pretrain and fine-tune:
 ```bash
 uv run imu-edge-train \
   --config configs/pretrain_wisdm19.yaml \
-  --model edge_tcn \
-  --run-name edge_tcn_wisdm19_pretrain
+  --model edge_window_tcn \
+  --run-name edge_window_tcn_wisdm19_pretrain
 
 uv run imu-edge-train \
   --config configs/benchmark.yaml \
-  --model edge_tcn \
-  --init-checkpoint experiments/results/edge_tcn_wisdm19_pretrain/checkpoints/best.ckpt \
-  --run-name edge_tcn_wisdm19_finetune
+  --model edge_window_tcn \
+  --init-checkpoint experiments/results/edge_window_tcn_wisdm19_pretrain/checkpoints/best.ckpt \
+  --run-name edge_window_tcn_wisdm19_finetune
 ```
 
 The full scratch-vs-pretrained sweep is also wrapped in:
@@ -241,16 +247,18 @@ scripts/run_wisdm_pretraining_experiments.sh
 
 Registered model IDs:
 
-- `teacher_causal_cnn`: larger causal teacher used for distillation.
-- `causal_context_transformer_cnn`: causal context model with attention over
-  recent windows.
-- `edge_cnn`: compact CNN student.
-- `edge_tcn`: compact temporal convolution student.
+- `teacher_causal_cnn`: larger per-window CNN plus temporal Transformer teacher.
+- `causal_context_transformer_cnn`: configurable causal/bidirectional
+  per-window Transformer.
+- `edge_window_gru`: compact per-window CNN plus temporal GRU student.
+- `edge_window_tcn`: compact per-window CNN plus temporal embedding-TCN student.
+- `edge_cnn`: compact single-window CNN student.
+- `edge_tcn`: compact single-window temporal convolution student.
 - `cnn_har`: single-window CNN-HAR baseline.
 - `tinierhar`: single-window TinierHAR baseline.
 
-The default benchmark uses `teacher_causal_cnn`, `edge_cnn`, and `edge_tcn`
-with width multipliers `0.25`, `0.5`, and `1.0`.
+The default benchmark uses `teacher_causal_cnn`, `edge_window_gru`, and
+`edge_window_tcn` with width multipliers `0.25`, `0.5`, and `1.0`.
 
 ## Outputs
 
@@ -297,7 +305,7 @@ Important defaults in `configs/benchmark.yaml`:
 - `data.n_classes: 9`
 - `train.max_epochs: 30`
 - `train.output_root: experiments/results`
-- `benchmark.models: [teacher_causal_cnn, edge_cnn, edge_tcn]`
+- `benchmark.models: [teacher_causal_cnn, edge_window_gru, edge_window_tcn]`
 
 If you change the data source or windowing parameters and want to rebuild cached
 windows, either set `data.reuse_window_cache: false` or delete the relevant

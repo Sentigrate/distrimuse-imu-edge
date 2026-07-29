@@ -6,7 +6,11 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-from distrimuse_imu_edge.cli.common import default_run_name, load_runtime_config
+from distrimuse_imu_edge.cli.common import (
+    default_run_name,
+    effective_context_lengths_for,
+    load_runtime_config,
+)
 from distrimuse_imu_edge.compression.pruning import apply_structured_pruning
 from distrimuse_imu_edge.compression.quantization import apply_dynamic_quantization
 from distrimuse_imu_edge.data.datamodule import IMUEdgeDataModule
@@ -37,6 +41,12 @@ def main() -> None:
     model, ckpt = load_checkpoint_model(args.checkpoint, map_location="cpu")
     model_name = args.model or ckpt["model_name"]
     model_kwargs = ckpt.get("model_kwargs", {})
+    data_cfg.context_len, data_cfg.future_context_len = effective_context_lengths_for(
+        model_name,
+        data_cfg.context_len,
+        data_cfg.future_context_len,
+    )
+    resolved["data"] = data_cfg.to_dict()
     compression = {"method": args.method}
     if args.method == "dynamic_quant":
         model = apply_dynamic_quantization(model)

@@ -9,28 +9,20 @@ def make_width(value: int, width_mult: float) -> int:
 
 
 class CurrentWindowMixin:
-    """Helper for models that only consume the current window."""
+    """Helper for models that require exactly one current window."""
 
     @staticmethod
     def current_window(x: torch.Tensor) -> torch.Tensor:
         if x.ndim == 4:
-            return x[:, -1]
+            if x.shape[1] != 1:
+                raise ValueError(
+                    f"single-window model received {x.shape[1]} windows; "
+                    "use edge_window_gru or edge_window_tcn for temporal context"
+                )
+            return x[:, 0]
         if x.ndim == 3:
             return x
         raise ValueError(f"expected (B,N,T,C) or (B,T,C), got {tuple(x.shape)}")
-
-
-class ContextConvMixin:
-    """Helper for models that treat causal context as one longer 1D signal."""
-
-    @staticmethod
-    def context_signal(x: torch.Tensor) -> torch.Tensor:
-        if x.ndim == 3:
-            return x.transpose(1, 2)
-        if x.ndim != 4:
-            raise ValueError(f"expected (B,N,T,C), got {tuple(x.shape)}")
-        b, n, t, c = x.shape
-        return x.reshape(b, n * t, c).transpose(1, 2)
 
 
 class ConvWindowEncoder(nn.Module):
