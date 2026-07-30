@@ -62,6 +62,20 @@ flowchart LR
     I --> J["9 class logits"]
 ```
 
+### Implementation map
+
+The most relevant implementation points are:
+
+| Responsibility | Source | What to inspect |
+|---|---|---|
+| Build past/current/future sequences | [`data/sequence.py`](../../src/distrimuse_imu_edge/data/sequence.py#L49-L81) | Index range, boundary padding, and preservation of the current label |
+| Apply one CNN to every window | [`models/base.py`](../../src/distrimuse_imu_edge/models/base.py#L28-L49) and [`encode_windows`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L11-L25) | Shared encoder definition and the `[B,N,T,C] → [B,N,D]` reshape |
+| Implement causal or future-aware temporal convolutions | [`_SequenceConv`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L70-L92) | Left-only versus symmetric convolution padding |
+| Build residual TCN blocks | [`_WindowTCNBlock`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L106-L141) | Two dilated convolutions, normalization, dropout, and residual shortcut |
+| Assemble and execute Edge Window TCN | [`EdgeWindowTCN`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L144-L199) | Width-scaled dimensions, dilations `1,2,4`, head, and current-position selection |
+| Convert CLI context into model arguments | [`model_kwargs_for`](../../src/distrimuse_imu_edge/cli/common.py#L49-L60) and [`train.py`](../../src/distrimuse_imu_edge/cli/train.py#L70-L81) | `current_index`, `bidirectional`, width, and model construction |
+| Verify temporal information flow | [`test_models_and_losses.py`](../../tests/test_models_and_losses.py#L83-L124) | Causal models ignore future tokens; future-aware models react to them |
+
 ### 1. Sequence construction
 
 For a target window at dataset index `i`, the loader creates:
@@ -78,9 +92,29 @@ N = context_len + future_context_len
 
 `context_len` includes the current window. Therefore, `context_len=8` selects `i−7 ... i`; adding `future_context_len=7` extends the sequence through `i+7`. Sequences never cross person or scenario boundaries. Missing positions at a recording boundary are zero-padded, while the target always remains the label of window `i`.
 
+The key range calculation in [`SequenceWindowDataset._build_index_map`](../../src/distrimuse_imu_edge/data/sequence.py#L49-L67) is:
+
+```python
+cursor = idx - self.context_len + 1
+final_cursor = idx + self.future_context_len
+while cursor <= final_cursor:
+    # Keep an in-group index or insert -1 for boundary padding.
+    ...
+```
+
+[`__getitem__`](../../src/distrimuse_imu_edge/data/sequence.py#L72-L81) turns `-1` positions into zero windows and returns `self.y[idx]` as the classification target. The boundary behavior is covered directly by the [causal and future-context dataset tests](../../tests/test_windowing_sequence.py#L40-L71).
+
 ### 2. Shared per-window CNN encoder
 
 The batch and window dimensions are combined temporarily, so every window passes through one shared encoder as `[B·N, 6, 312]`.
+
+```python
+b, n, t, c = x.shape
+flat = x.reshape(b * n, t, c).transpose(1, 2)
+return self.window_encoder(flat).reshape(b, n, -1)
+```
+
+This is the complete reshape-and-encode path in [`_WindowSequenceMixin.encode_windows`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L15-L25). The actual convolution stack and projection live in [`ConvWindowEncoder`](../../src/distrimuse_imu_edge/models/base.py#L28-L49).
 
 | Layer | Operation | Width 0.5 | Width 0.25 |
 |---|---|---:|---:|
@@ -100,6 +134,8 @@ The width multiplier scales the internal channel counts:
 ```python
 scaled_width = max(8, round(base_width * width_mult))
 ```
+
+The exact helper is [`make_width`](../../src/distrimuse_imu_edge/models/base.py#L7-L8); its use for the embedding and TCN dimensions is visible in [`EdgeWindowTCN.__init__`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L148-L166).
 
 For `edge_window_tcn`, the base CNN widths are 64 and 128, while the embedding and temporal-TCN widths are 96. The multiplier does **not** change the layer count, kernels, dilations, context length, sampling rate, or output classes.
 
@@ -124,6 +160,20 @@ The padding mode controls what information is legal:
 - **No future windows:** left-only padding makes the temporal convolutions causal. The current representation can use current and earlier embeddings, never later ones.
 - **Future windows present:** symmetric padding makes the temporal convolutions non-causal. The current representation can combine embeddings from both sides.
 
+That switch is implemented in [`_SequenceConv`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L70-L92):
+
+```python
+self.left_padding = 0 if bidirectional else 2 * dilation
+self.conv = nn.Conv1d(
+    ...,
+    kernel_size=3,
+    dilation=dilation,
+    padding=dilation if bidirectional else 0,
+)
+```
+
+The three residual blocks are then instantiated with `dilation=1`, `2`, and `4` in [`EdgeWindowTCN`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L167-L189).
+
 “Non-causal” describes the information flow, not a second set of model weights. The causal and past 7 + current + future 7 variants therefore have the same parameter count.
 
 ### 5. Explicit current-position classification
@@ -134,6 +184,19 @@ After temporal processing, the model selects:
 current_index = context_len - 1
 current_embedding = temporal[:, current_index]
 ```
+
+The CLI-to-model wiring and final selection are deliberately separate:
+
+```python
+# cli/common.py
+kwargs["current_index"] = data_cfg.context_len - 1
+kwargs["bidirectional"] = data_cfg.future_context_len > 0
+
+# models/edge_window_sequence.py
+return self.head(temporal[:, self.current_index])
+```
+
+See [`model_kwargs_for`](../../src/distrimuse_imu_edge/cli/common.py#L49-L60) for the configuration mapping and [`EdgeWindowTCN.forward`](../../src/distrimuse_imu_edge/models/edge_window_sequence.py#L196-L199) for classification. The corresponding behavior tests explicitly mutate future tokens and verify that [causal output stays unchanged while future-aware output changes](../../tests/test_models_and_losses.py#L83-L124).
 
 This gives index 0 for current-only and index 7 for both seven-past experiments. In the 15-window past 7 + current + future 7 sequence, the classifier reads the actual current position rather than the final future window.
 
