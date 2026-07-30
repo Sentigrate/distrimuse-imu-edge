@@ -196,19 +196,19 @@ Falling remains the weakest class despite more than doubling its F1 from `0.154`
 
 ![Macro-F1 versus measured CPU latency](edge_window_tcn_context_report_assets/accuracy-latency-tradeoff.svg)
 
-| Context mode | Parameters | State-dict size | GMAC / inference | Approx. strict GFLOPs¹ | CPU median | CPU p95 | Median latency vs current |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Current only | 63,081 | 0.271 MB | 0.0036 | 0.0073 | 0.249 ms | 0.281 ms | 1.00× |
-| Past 7 + current | 63,081 | 0.271 MB | 0.0295 | 0.0590 | 0.699 ms | 0.716 ms | 2.81× |
-| Past 7 + current + future 7 | 63,081 | 0.271 MB | 0.0553 | 0.1107 | 1.562 ms | 1.986 ms | 6.27× |
+| Context mode | Parameters | State-dict size | GFLOPs / inference | CPU median | CPU p95 | Median latency vs current |
+|---|---:|---:|---:|---:|---:|---:|
+| Current only | 63,081 | 0.271 MB | 0.0036 | 0.249 ms | 0.281 ms | 1.00× |
+| Past 7 + current | 63,081 | 0.271 MB | 0.0295 | 0.699 ms | 0.716 ms | 2.81× |
+| Past 7 + current + future 7 | 63,081 | 0.271 MB | 0.0553 | 1.562 ms | 1.986 ms | 6.27× |
 
-¹ Strict FLOPs use two operations per multiply-accumulate. The project’s `gflops` compatibility field follows the common convention of reporting GMACs.
+GFLOPs are reported using the project’s standard `gflops` profiler field.
 
 The parameter count stays constant because the same CNN encoder and temporal TCN weights are reused at every position. Compute grows almost linearly with the number of windows:
 
-- Past 7 + current uses `8.09×` the GMACs of current-only.
-- Past + current + future uses `15.17×` the GMACs of current-only and `1.88×` those of past-only.
-- Measured latency grows more slowly than MACs at first because fixed framework overhead dominates the very small current-only inference.
+- Past 7 + current uses `8.09×` the GFLOPs of current-only.
+- Past + current + future uses `15.17×` the GFLOPs of current-only and `1.88×` those of past-only.
+- Measured latency grows more slowly than FLOPs at first because fixed framework overhead dominates the very small current-only inference.
 
 The latency figures are batch-size-one CPU timings on the run host, using five warm-up passes and 30 timed passes. They are useful for comparing these runs, not as a device guarantee. Deployment decisions should be based on the intended target hardware, runtime, thread configuration, and power budget.
 
@@ -245,7 +245,7 @@ The current-only difference is small (`−0.025` macro-F1 for `edge_window_tcn`)
 
 **Offline or delayed inference:** use **Past 7 + current + future 7** when a 7 s delay is acceptable. It is the strongest tested model overall and improves every test subject.
 
-**Severely compute-constrained deployment:** retain **Current only** only when the roughly 8× reduction in MACs relative to past-context inference is more important than the `0.125` macro-F1 loss.
+**Severely compute-constrained deployment:** retain **Current only** only when the roughly 8× reduction in FLOPs relative to past-context inference is more important than the `0.125` macro-F1 loss.
 
 Before selecting a production configuration:
 

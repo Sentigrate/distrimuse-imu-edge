@@ -348,19 +348,19 @@ L 560.12262 369.5395
    </g>
    <g id="text_18">
     <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(136.207482 332.732843)">Current</text>
-    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(136.207482 342.810874)">0.0036 GMAC</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(136.207482 342.810874)">0.0036 GFLOPs</text>
    </g>
    <g id="text_19">
     <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(277.299379 152.370454)">Past 7 + current</text>
-    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(277.299379 162.448486)">0.0295 GMAC</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(277.299379 162.448486)">0.0295 GFLOPs</text>
    </g>
    <g id="text_20">
     <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(547.555233 64.051503)">Past 7 + current + future 7</text>
-    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(547.555233 74.129534)">0.0553 GMAC</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(547.555233 74.129534)">0.0553 GFLOPs</text>
    </g>
    <g id="text_21">
     <text style="font-size: 12px; font-family: 'DejaVu Sans'" transform="translate(224.62256 16.318125)">Accuracy–latency trade-off</text>
-    <text style="font-size: 12px; font-family: 'DejaVu Sans'" transform="translate(212.04506 29.7555)">Bubble area represents GMACs</text>
+    <text style="font-size: 12px; font-family: 'DejaVu Sans'" transform="translate(210.598498 29.7555)">Bubble area represents GFLOPs</text>
    </g>
   </g>
  </g>
