@@ -255,6 +255,10 @@ Mean confidence exceeds accuracy by 2.9, 6.1, and 7.4 percentage points for curr
 
 The matched width-0.5 results are useful for separating the effect of temporal context from model capacity. They are retained here as a secondary comparison; the report’s main figures and conclusions above use width 0.25.
 
+![Macro-F1, median CPU latency, and GFLOPs for widths 0.25 and 0.5](edge_window_tcn_context_report_assets/width-latency-comparison.svg)
+
+Color identifies the context mode, while squares represent width 0.5 and circles represent width 0.25; bubble area and the adjacent labels show GFLOPs. The paired points make the context-dependent width effect visible: the compact past 7 + current model is slower and less accurate on this host, whereas the two past 7 + current + future 7 models have nearly identical latency and macro-F1 despite the compact model’s much lower FLOPs.
+
 ![Width-0.25 and width-0.5 results across matched contexts](edge_window_tcn_context_report_assets/width-comparison.svg)
 
 | Context mode | Macro-F1, wm=0.5 | Macro-F1, wm=0.25 | Compact − wider | GFLOPs, wm=0.5 | GFLOPs, wm=0.25 | FLOPs reduction |
