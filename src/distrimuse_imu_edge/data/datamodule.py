@@ -30,11 +30,21 @@ class IMUEdgeDataModule:
         split_frames = self._load_split_frames()
         manifest = self._load_manifest()
         arrays: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
-        for split_name, participants in {
+        for split_name, configured_ids in {
             "train": self.config.split.train_ids,
             "val": self.config.split.val_ids,
             "test": self.config.split.test_ids,
         }.items():
+            # When split_dir is set, the parquet file's own row membership *is*
+            # the split (e.g. synthetic subjects added to train.parquet by
+            # distrimuse-synthetic-data) — trust it instead of the static
+            # config.split.*_ids allowlist, which only lists real subject IDs
+            # and would silently drop every synthetic row otherwise.
+            participants = (
+                sorted(split_frames[split_name]["person_id"].unique().tolist())
+                if self.config.split_dir is not None
+                else configured_ids
+            )
             arrays[split_name] = self._load_or_build_windows(
                 split_name=split_name,
                 df=split_frames[split_name],
