@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 import torch
+import torch.nn.functional as functional
 
 from distrimuse_imu_edge.compression.quantization import apply_dynamic_quantization
 from distrimuse_imu_edge.models import build_model, list_models
+from distrimuse_imu_edge.models.edge_window_sequence import _SequenceConv
 from distrimuse_imu_edge.training.losses import distillation_loss
 
 
@@ -122,6 +124,40 @@ def test_bidirectional_window_students_use_future_tokens(model_name: str) -> Non
         after = model(changed_future)
 
     assert not torch.allclose(before, after)
+
+
+@pytest.mark.parametrize("bidirectional", [False, True])
+def test_single_position_sequence_convolution_matches_conv1d(bidirectional: bool) -> None:
+    layer = _SequenceConv(4, 5, dilation=2, bidirectional=bidirectional)
+    x = torch.randn(3, 4, 1, requires_grad=True)
+
+    actual = layer(x)
+    expected = functional.conv1d(
+        x if bidirectional else functional.pad(x, (4, 0)),
+        layer.conv.weight,
+        layer.conv.bias,
+        padding=2 if bidirectional else 0,
+        dilation=2,
+    )
+
+    assert torch.allclose(actual, expected, atol=1e-6)
+    actual.sum().backward()
+    assert layer.conv.weight.grad is not None
+
+
+def test_single_window_tcn_supports_forward_and_backward() -> None:
+    model = build_model(
+        "edge_window_tcn",
+        n_classes=3,
+        input_channels=6,
+        width_mult=0.25,
+        current_index=0,
+    )
+    output = model(torch.randn(2, 1, 20, 6))
+
+    assert output.shape == (2, 3)
+    output.sum().backward()
+    assert all(parameter.grad is not None for parameter in model.parameters())
 
 
 def test_whar_reference_style_models_emit_class_logits() -> None:

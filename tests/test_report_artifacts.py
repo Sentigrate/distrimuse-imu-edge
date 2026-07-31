@@ -4,7 +4,10 @@ import json
 
 import pandas as pd
 
-from distrimuse_imu_edge.evaluation.artifacts import write_test_prediction_artifacts
+from distrimuse_imu_edge.evaluation.artifacts import (
+    _subject_cm_overview_figure,
+    write_test_prediction_artifacts,
+)
 
 
 def test_test_artifacts_include_combined_and_per_subject_outputs(tmp_path) -> None:
@@ -45,3 +48,30 @@ def test_test_artifacts_include_combined_and_per_subject_outputs(tmp_path) -> No
     )
     assert [row["person_id"] for row in subject_metrics] == [8, 15]
     assert (tmp_path / "reports" / "test_per_subject_metrics.csv").exists()
+
+
+def test_subject_cm_overview_uses_outer_axis_labels_for_multiple_rows() -> None:
+    test = pd.DataFrame(
+        {
+            "y_true": [0, 1, 2] * 5,
+            "y_pred": [0, 1, 2, 0, 2, 2, 0, 1, 1, 0, 1, 2, 0, 2, 1],
+            "person_id": [8] * 3 + [15] * 3 + [24] * 3 + [26] * 3 + [27] * 3,
+        }
+    )
+
+    figure = _subject_cm_overview_figure(
+        test=test,
+        person_ids=[8, 15, 24, 26, 27],
+        class_names=["still", "walk", "turn"],
+    )
+
+    assert figure.layout.height == 1020
+    assert figure.layout.xaxis.title.text == ""
+    assert figure.layout.xaxis.showticklabels is False
+    assert figure.layout.xaxis4.title.text == "Predicted"
+    assert figure.layout.xaxis4.showticklabels is True
+    assert figure.layout.yaxis.title.text == "True"
+    assert figure.layout.yaxis.showticklabels is True
+    assert figure.layout.yaxis2.title.text == ""
+    assert figure.layout.yaxis2.showticklabels is False
+    assert all(annotation.font.size == 14 for annotation in figure.layout.annotations)

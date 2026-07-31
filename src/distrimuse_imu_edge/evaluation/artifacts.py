@@ -52,13 +52,12 @@ def _write_cm(
     figure.write_html(path, full_html=True, include_plotlyjs="cdn")
 
 
-def _write_subject_cm_overview(
-    path: Path,
+def _subject_cm_overview_figure(
     *,
     test: pd.DataFrame,
     person_ids: list[int],
     class_names: list[str],
-) -> None:
+) -> go.Figure:
     n_classes = len(class_names)
     panels: list[tuple[str, np.ndarray, np.ndarray]] = [
         (
@@ -88,12 +87,14 @@ def _write_subject_cm_overview(
         cols=n_cols,
         subplot_titles=titles,
         horizontal_spacing=0.07,
-        vertical_spacing=min(0.12, 0.3 / n_rows),
+        vertical_spacing=min(0.18, 0.38 / n_rows),
     )
 
     for index, (_, y_true, y_pred) in enumerate(panels):
         row = (index // n_cols) + 1
         col = (index % n_cols) + 1
+        is_bottom_row = row == n_rows
+        is_left_column = col == 1
         cm = _normalised_cm(y_true, y_pred, n_classes=n_classes)
         figure.add_trace(
             go.Heatmap(
@@ -115,25 +116,51 @@ def _write_subject_cm_overview(
             col=col,
         )
         figure.update_xaxes(
-            title_text="Predicted",
+            title_text="Predicted" if is_bottom_row else "",
             tickangle=-35,
             tickfont_size=8,
+            showticklabels=is_bottom_row,
+            automargin=True,
             row=row,
             col=col,
         )
         figure.update_yaxes(
-            title_text="True" if col == 1 else "",
+            title_text="True" if is_left_column else "",
             autorange="reversed",
             tickfont_size=8,
+            showticklabels=is_left_column,
+            automargin=True,
             row=row,
             col=col,
         )
 
+    for annotation in figure.layout.annotations:
+        annotation.font.size = 14
+
     figure.update_layout(
-        title="Test confusion matrices by subject (row-normalised)",
-        height=max(520, 440 * n_rows),
+        title={
+            "text": "Test confusion matrices by subject (row-normalised)",
+            "x": 0.5,
+            "xanchor": "center",
+        },
+        height=max(620, 510 * n_rows),
         width=max(720, 500 * n_cols),
-        margin={"l": 80, "r": 80, "t": 100, "b": 100},
+        margin={"l": 90, "r": 90, "t": 120, "b": 110},
+    )
+    return figure
+
+
+def _write_subject_cm_overview(
+    path: Path,
+    *,
+    test: pd.DataFrame,
+    person_ids: list[int],
+    class_names: list[str],
+) -> None:
+    figure = _subject_cm_overview_figure(
+        test=test,
+        person_ids=person_ids,
+        class_names=class_names,
     )
     figure.write_html(path, full_html=True, include_plotlyjs="cdn")
 

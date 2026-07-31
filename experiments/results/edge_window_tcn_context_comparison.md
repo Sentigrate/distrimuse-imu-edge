@@ -278,6 +278,93 @@ Past context improves eight of nine class F1 scores; Falling is the exception (`
 
 Falling remains the weakest class with past 7 + current + future 7 and has only 86 test windows. Its non-monotonic result across context modes is a warning against overinterpreting one small class from one seed. It still needs more examples, targeted sampling or loss work, and inspection of the saved confusion matrices.
 
+## Confusion-matrix analysis
+
+The matrices below are **row-normalised**: each row is a true class and sums to one, so the diagonal is per-class recall. They reveal which wrong label receives each class’s missed examples, but they do not show precision by themselves. Each overview contains the combined test set followed by the five test subjects.
+
+### Aggregate comparison across context modes
+
+[![All-test-subject confusion-matrix comparison for the three width-0.25 models](edge_window_tcn_context_report_assets/cm-comparison-wm025-all-subjects.svg)](edge_window_tcn_context_report_assets/cm-comparison-wm025-all-subjects.svg)
+
+The single-row comparison makes the effect of temporal context especially clear. Past context strengthens Turn and Falling recall but introduces stronger Lay Down → Turn and Stand Up → Turn errors. Adding future 7 produces the cleanest diagonal overall and large gains for Sit Down, Lay Down, Sit Up, Stand Up, and Hand.
+
+### Width 0.25 — current only
+
+[![Current-only confusion matrices](edge_window_tcn_context_report_assets/cm-overview-wm025-current.svg)](edge_window_tcn_context_report_assets/cm-overview-wm025-current.svg)
+
+[Interactive overview](edge_window_tcn_wm025_current/confusion_matrices/test_subjects_overview.html) · [combined matrix](edge_window_tcn_wm025_current/confusion_matrices/test_all_subjects.html)
+
+With only the current window, Not Moving and Walk are already reliable, but the transition classes form a broad confusion cluster. Lay Down is most often predicted as Turn (`28.2%`) or Sit Up (`27.5%`); Sit Up is often predicted as Turn (`22.8%`); and Turn is often predicted as Sit Up (`21.0%`). Hand recall is only `61.5%`, with `14.5%` of Hand windows absorbed by Not Moving.
+
+### Width 0.25 — past 7 + current
+
+[![Past 7 plus current confusion matrices](edge_window_tcn_context_report_assets/cm-overview-wm025-past7-current.svg)](edge_window_tcn_context_report_assets/cm-overview-wm025-past7-current.svg)
+
+[Interactive overview](edge_window_tcn_wm025_past7_current/confusion_matrices/test_subjects_overview.html) · [combined matrix](edge_window_tcn_wm025_past7_current/confusion_matrices/test_all_subjects.html)
+
+Past context raises Turn recall from `57.6%` to `78.6%`, but the improvement is uneven. Lay Down remains difficult and is now predicted as Turn for `44.3%` of its windows. Falling recall rises from `30.2%` to `62.8%`, yet precision collapses from `40.6%` to `15.7%`: the model predicts Falling too often, explaining why Falling F1 decreases despite the darker diagonal.
+
+### Width 0.25 — past 7 + current + future 7
+
+[![Past 7 plus current plus future 7 confusion matrices](edge_window_tcn_context_report_assets/cm-overview-wm025-past7-current-future7.svg)](edge_window_tcn_context_report_assets/cm-overview-wm025-past7-current-future7.svg)
+
+[Interactive overview](edge_window_tcn_wm025_centered_scratch/confusion_matrices/test_subjects_overview.html) · [combined matrix](edge_window_tcn_wm025_centered_scratch/confusion_matrices/test_all_subjects.html)
+
+Future context produces the cleanest diagonal and improves recall for all nine classes relative to current-only. Relative to past-only, Turn is the sole small recall decrease (`57.6% → 78.6% → 76.1%` across the three modes), but its precision rises strongly to `76.8%`, so its F1 still reaches `0.764`.
+
+| Class | Test support | Recall: current | Recall: past 7 + current | Recall: past 7 + current + future 7 | Largest remaining error with future 7 |
+|---|---:|---:|---:|---:|---|
+| Not Moving | 4,201 | 0.740 | 0.747 | **0.767** | Walk: 0.089 |
+| Walk | 2,874 | 0.829 | 0.842 | **0.888** | Hand: 0.040 |
+| Sit Down | 294 | 0.473 | 0.582 | **0.762** | Walk: 0.092 |
+| Lay Down | 255 | 0.263 | 0.357 | **0.624** | Turn: 0.184 |
+| Turn | 873 | 0.576 | **0.786** | 0.761 | Lay Down: 0.121 |
+| Sit Up | 228 | 0.421 | 0.421 | **0.640** | Stand Up: 0.145 |
+| Stand Up | 429 | 0.625 | 0.541 | **0.811** | Not Moving: 0.049 |
+| Falling | 86 | 0.302 | 0.628 | **0.640** | Walk: 0.093 |
+| Hand | 1,388 | 0.615 | 0.634 | **0.909** | Not Moving: 0.041 |
+
+The main class-level conclusions are:
+
+- **Static and repetitive activities are strongest.** Not Moving, Walk, and Hand have the cleanest diagonals. With past and future context, their recalls are `76.7%`, `88.8%`, and `90.9%`.
+- **Future evidence is particularly valuable for transitions.** Sit Down recall rises by `28.9` percentage points, Lay Down by `36.1`, Sit Up by `21.9`, and Stand Up by `18.6` relative to current-only.
+- **The remaining errors are semantically plausible.** Lay Down still leaks into Turn, Turn into Lay Down, and Sit Up into Stand Up because adjacent 3 s windows can contain overlapping stages of the same movement.
+- **Falling remains the most fragile result.** The past-and-future model reaches `64.0%` recall but only `27.6%` precision, yielding F1 `0.386`. With just 86 test windows, a handful of false positives or misses changes the score substantially.
+- **Subject variability remains material.** Subject 26 is consistently easiest and reaches macro-F1 `0.790`; subject 24 remains hardest at `0.558`, mainly because Lay Down, Turn, and Sit Up still mix. Subject 8 also retains a clear Sit Up/Stand Up ambiguity, with both receiving `40%` of true Sit Up windows.
+
+### Width 0.5 reference overviews
+
+These reference matrices are included for completeness but kept collapsed so the main report remains focused on width 0.25.
+
+<details>
+<summary><strong>Width 0.5 — current only</strong></summary>
+
+[![Width-0.5 current-only confusion matrices](edge_window_tcn_context_report_assets/cm-overview-wm05-current.svg)](edge_window_tcn_context_report_assets/cm-overview-wm05-current.svg)
+
+[Interactive overview](edge_window_tcn_current/confusion_matrices/test_subjects_overview.html)
+
+</details>
+
+<details>
+<summary><strong>Width 0.5 — past 7 + current</strong></summary>
+
+[![Width-0.5 past 7 plus current confusion matrices](edge_window_tcn_context_report_assets/cm-overview-wm05-past7-current.svg)](edge_window_tcn_context_report_assets/cm-overview-wm05-past7-current.svg)
+
+[Interactive overview](edge_window_tcn_past7_current/confusion_matrices/test_subjects_overview.html)
+
+</details>
+
+<details>
+<summary><strong>Width 0.5 — past 7 + current + future 7</strong></summary>
+
+[![Width-0.5 past 7 plus current plus future 7 confusion matrices](edge_window_tcn_context_report_assets/cm-overview-wm05-past7-current-future7.svg)](edge_window_tcn_context_report_assets/cm-overview-wm05-past7-current-future7.svg)
+
+[Interactive overview](edge_window_tcn_past7_current_future7/confusion_matrices/test_subjects_overview.html)
+
+</details>
+
+The two past 7 + current + future 7 widths reach nearly identical macro-F1 through different class trade-offs. Width 0.5 has higher recall for Not Moving (`80.8%` versus `76.7%`), Turn (`80.3%` versus `76.1%`), Stand Up (`82.3%` versus `81.1%`), and Falling (`83.7%` versus `64.0%`). Width 0.25 is much stronger on Sit Down (`76.2%` versus `55.4%`) and Lay Down (`62.4%` versus `51.0%`), and its slightly higher Falling precision offsets its lower Falling recall. This reinforces the need to inspect per-class precision and recall rather than selecting a width from macro-F1 alone.
+
 ## Model size, FLOPs, and latency
 
 ![Macro-F1 versus measured CPU latency for width 0.25](edge_window_tcn_context_report_assets/accuracy-latency-tradeoff.svg)

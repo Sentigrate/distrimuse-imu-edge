@@ -87,6 +87,14 @@ class _SequenceConv(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[-1] == 1:
+            # MPS Conv1d misinterprets channels for a one-position sequence.
+            # With zero padding, only one kernel tap can overlap that position,
+            # so a linear projection is exactly equivalent and remains fully
+            # differentiable with respect to the convolution parameters.
+            kernel_index = self.conv.kernel_size[0] - 1 if self.left_padding else 1
+            weight = self.conv.weight[:, :, kernel_index]
+            return functional.linear(x.squeeze(-1), weight, self.conv.bias).unsqueeze(-1)
         if self.left_padding:
             x = functional.pad(x, (self.left_padding, 0))
         return self.conv(x)

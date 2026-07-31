@@ -274,7 +274,15 @@ def train_model(
     resolved_config: dict[str, Any],
     teacher: nn.Module | None = None,
     compression: dict[str, Any] | None = None,
+    profile_context: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
+    """Train ``model`` and write metrics, reports, and an efficiency profile.
+
+    ``profile_context`` overrides the ``(context_len, future_context_len)`` used
+    to build the efficiency profiling input. Pass it when the model consumes
+    fewer windows than the dataloader emits, as in privileged-context
+    distillation, so the reported FLOPs and latency match deployment.
+    """
     set_seed(train_config.seed)
     device = resolve_device(train_config.device)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -384,10 +392,14 @@ def train_model(
         ),
         "history": history,
     }
+    profile_ctx, profile_future = profile_context or (
+        datamodule.config.context_len,
+        datamodule.config.future_context_len,
+    )
     stats = compute_model_stats(
         model.to("cpu"),
-        context_len=datamodule.config.context_len,
-        future_context_len=datamodule.config.future_context_len,
+        context_len=profile_ctx,
+        future_context_len=profile_future,
         window_size_s=datamodule.config.window_size_s,
         n_channels=len(datamodule.config.sensor_cols),
         compression=compression,
