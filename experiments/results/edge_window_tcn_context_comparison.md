@@ -14,6 +14,7 @@ The complete width-0.25 ablation shows that temporal context is useful even in a
 - More context increases execution cost rather than storage: current-only, past 7 + current, and past 7 + current + future 7 inference require `0.0010`, `0.0083`, and `0.0155` GFLOPs, with measured median CPU latencies of `0.267`, `0.983`, and `1.564 ms`.
 - For a strict sub-0.1 MB online model, **width 0.25 with seven past windows + current** is the best measured causal choice. For offline or delayed inference, **width 0.25 with past, current, and future context** is clearly strongest.
 - As a secondary comparison, width 0.25 essentially matched width 0.5 for past 7 + current + future 7 input (`0.694` versus `0.690` macro-F1) while using **73.7% fewer parameters** and **72.0% fewer FLOPs**; however, its causal past-context score was `0.061` lower.
+- **Int8 post-training quantization costs almost nothing for the future-context model and a lot for the causal ones.** All three were quantized (six models total), and the accuracy loss runs inversely to context: `−0.0006` macro-F1 with future context, `−0.0235` for past 7 + current, `−0.0366` for current only. Since past context was only worth `+0.039` to begin with, quantization gives back roughly 60% of it. Quantization also cuts estimated duty cycle ~4× — from `0.259` to `0.065` for past 7 + current.
 
 ![Width-0.25 test performance across context modes](edge_window_tcn_context_report_assets/performance-comparison.svg)
 
@@ -387,6 +388,207 @@ Latency grows more slowly than FLOPs because fixed framework and operator overhe
 
 End-to-end response time differs from model execution time. Every mode first needs the 3 s current window. The past 7 + current + future 7 model then requires an additional 7 s of future data, making its approximately 1.56 ms neural-network latency negligible beside its algorithmic look-ahead delay.
 
+## Int8 post-training quantization (PTQ)
+
+Every result above is a float32 model. This section adds an int8 variant of all
+three, giving six models in total: three context modes × two numeric precisions.
+
+### What quantization is, and what "post-training" means
+
+A float32 weight uses 32 bits. Quantization stores it as an 8-bit integer plus
+two per-tensor numbers — a **scale** and a **zero-point** — that map between the
+two representations:
+
+```text
+real_value ≈ scale × (int8_value − zero_point)
+```
+
+Only 256 distinct values survive per tensor, so precision is lost. Two things are
+gained. Weights become 4× smaller, and the arithmetic becomes integer: integer
+multiply-accumulate costs far less energy than float, and the SIMD instructions on
+an ARM Cortex-M sustain roughly 2 int8 multiply-accumulates per cycle against
+about 0.5 for float32. That ~4× throughput difference is the reason quantization
+matters more for battery life than for storage.
+
+**Post-training quantization** takes an already-trained checkpoint and quantizes
+it. No retraining, no gradient steps, no change to the training recipe — the
+float32 runs above are the inputs. The alternative, quantization-aware training
+(QAT), inserts simulated rounding into the forward pass and fine-tunes so the
+weights adapt to it; that is deliberately **not** what this section does, and the
+results below are what decide whether it is worth doing.
+
+**Static** PTQ, used here, needs one extra ingredient over the dynamic variant: a
+**calibration** pass. Fixed scales can only be chosen for activations if their
+value ranges are known ahead of time, so a few hundred representative inputs are
+pushed through the model and the range each activation reaches is recorded.
+Calibration uses the **training** split only — calibrating on validation or test
+would leak evaluation data into the deployed model.
+
+### Why dynamic quantization was removed from the repository
+
+The repository previously offered `imu-edge-compress --method dynamic_quant`.
+Measured on the width-0.25 past-context checkpoint, it reduced the state dict from
+`0.0840` to `0.0825` MB — a `1.8%` saving — with **none** of the
+multiply-accumulates moving to int8. That path has since been deleted in favour of
+the static approach described here, and the pipeline's `--compress` step now emits
+int8 ONNX instead.
+
+The cause is structural rather than a tuning problem. PyTorch's
+`quantize_dynamic` converts `Linear` and `GRU` modules only, and `edge_window_tcn`
+holds `15,088` of its `16,569` parameters — and `99.98%` of its traced MACs — in
+`Conv1d`:
+
+| Layer type | Parameters | Share | Share of MACs |
+|---|---:|---:|---:|
+| `Conv1d` | 15,088 | 91.1% | 99.98% |
+| `Linear` | 1,017 | 6.1% | <0.1% |
+| `LayerNorm` | 336 | 2.0% | <0.1% |
+| `BatchNorm1d` | 128 | 0.8% | <0.1% |
+
+`structured_prune` remains available but is ineffective for a different reason: it
+zeroes 22.5% of the convolution weights while `prune.remove` bakes the mask in
+without changing tensor shapes, so parameters, state-dict size, and MACs are all
+bit-for-bit unchanged at `16,569` and `0.0840` MB. Realising a gain from it would
+need either a sparse runtime or genuine channel removal.
+
+Static quantization does cover convolutions, which is the whole point of using it.
+
+### How it is implemented
+
+The model is exported with `torch.export`/`torch.onnx.export` and quantized by
+ONNX Runtime, which rewrites the exported graph and therefore requires no edits
+to the model source. Verified per run: all `Conv` operators become `QLinearConv`,
+giving an int8 MAC-operator share of `1.00`.
+
+Two implementation choices are worth recording:
+
+- **`QOperator` format, not `QDQ`.** QDQ wraps each operator in
+  QuantizeLinear/DequantizeLinear pairs and leaves fusion to the runtime. On a
+  16,569-parameter model those ~130 extra nodes and their scale tensors cost more
+  bytes than int8 weights save, so QDQ files come out *larger* than float32
+  (`106.5` KiB versus `93.1` KiB on the past-context model). `QOperator` emits
+  fused `QLinearConv`/`QGemm` nodes directly and does shrink the file.
+- **Per-channel weight scales.** Each output channel gets its own scale, which
+  costs a few bytes of metadata and recovers most of what per-tensor scaling
+  loses on convolutions.
+
+PyTorch's own graph-mode quantizer was not used: it moved out of `torch` into
+`torchao`, and `torchao` does not import on this project's Python 3.14. The
+in-torch alternative is eager-mode quantization, which would require inserting
+`QuantStub`/`DeQuantStub`, replacing the residual additions in `_WindowTCNBlock`
+with `FloatFunctional`, and hand-fusing Conv+BN — invasive edits to the model code
+that all the float32 results above depend on.
+
+ONNX Runtime targets Linux/Android-class hardware, not bare-metal Cortex-M. A real
+microcontroller build would emit TFLite Micro or ExecuTorch instead. What this
+section measures is the question that comes first regardless of runtime: how much
+accuracy does int8 cost, and how much smaller does the model get.
+
+### Results
+
+![Float32 versus int8 accuracy and artifact size across the three context modes](edge_window_tcn_context_report_assets/ptq-float32-vs-int8.svg)
+
+| Context mode | Test macro-F1, float32 | Test macro-F1, int8 | Difference | Prediction agreement | ONNX float32 | ONNX int8 | Size change |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Current only | 0.5123 | 0.4756 | **−0.0366** | 0.886 | 63.1 KiB | 60.6 KiB | −4.0% |
+| Past 7 + current | 0.5517 | 0.5282 | **−0.0235** | 0.925 | 95.4 KiB | 74.8 KiB | −21.6% |
+| Past 7 + current + future 7 | 0.6935 | 0.6930 | **−0.0006** | 0.978 | 77.6 KiB | 50.2 KiB | −35.3% |
+
+The float32 column reproduces the main results table above exactly (`0.512`,
+`0.552`, `0.694`), which is the check that the ONNX export path is faithful.
+
+Two observations run against intuition:
+
+- **Size does not fall 4×.** Only about 65 of the 93 KiB in the float32 graph are
+  weights; graph structure, LayerNorm parameters, and constants do not shrink, and
+  quantization adds its own scale and zero-point tensors. The current-only model
+  barely shrinks at all (`−4.0%`) because it has just three convolutions to
+  quantize against a fixed graph overhead.
+- **The accuracy cost is strongly context-dependent, and inversely so.** The model
+  with the *most* context loses essentially nothing, while the model with the least
+  loses the most.
+
+### Compute, which is the actual prize
+
+File size is the least interesting axis. Because every convolution genuinely
+executes in int8, the analytic energy estimate (see the repository README) drops
+by the full throughput ratio. Under the `nrf52840_m4f_64mhz` profile at one
+inference per second:
+
+| Context mode | MMACs | Duty cycle, float32 | Duty cycle, int8 | Average power, float32 | Average power, int8 | Coin-cell life, float32 | Coin-cell life, int8 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Current only | 1.02 | 0.032 | 0.008 | 0.65 mW | 0.17 mW | 43.3 days | 165.4 days |
+| Past 7 + current | 8.28 | 0.259 | 0.065 | 5.18 mW | 1.30 mW | 5.4 days | 21.6 days |
+| Past 7 + current + future 7 | 15.52 | 0.485 | 0.121 | 9.71 mW | 2.43 mW | 2.9 days | 11.6 days |
+
+These are analytic estimates under a declared hardware assumption, not
+measurements, and they cover inference only — sensor sampling and radio are
+excluded. They are proportional to MACs at a fixed precision, so they re-express
+the GFLOPs column in interpretable units rather than adding a new ranking axis.
+
+### Where the accuracy goes
+
+![Per-class F1 change from int8 quantization across the three context modes](edge_window_tcn_context_report_assets/ptq-per-class-delta.svg)
+
+| Class | Test support | Current only | Past 7 + current | Past 7 + current + future 7 |
+|---|---:|---:|---:|---:|
+| Not Moving | 4,201 | −0.062 | −0.027 | +0.004 |
+| Walk | 2,874 | −0.022 | −0.010 | +0.001 |
+| Sit Down | 294 | −0.040 | −0.014 | −0.008 |
+| Lay Down | 255 | −0.013 | −0.025 | −0.003 |
+| Turn | 873 | −0.012 | −0.027 | −0.005 |
+| Sit Up | 228 | −0.010 | +0.001 | +0.011 |
+| Stand Up | 429 | −0.075 | −0.025 | −0.001 |
+| Falling | 86 | −0.019 | −0.031 | −0.004 |
+| Hand | 1,388 | −0.076 | −0.053 | −0.001 |
+
+The damage in the causal models is broad rather than concentrated: current-only
+loses ground on all nine classes, worst on `Hand` (`−0.076`), `Stand Up`
+(`−0.075`), and `Not Moving` (`−0.062`). Notably the losses are *not* confined to
+the rare classes, which is the usual expectation — `Not Moving`, `Walk`, and
+`Hand` have the three largest supports and still degrade.
+
+The future-context model is untouched on eight of nine classes and improves
+slightly on three. A plausible reading is that abundant temporal evidence leaves
+its decisions far from the decision boundary, so int8 rounding rarely flips one;
+that is consistent with its `0.978` prediction agreement against `0.886` for
+current-only. This is an interpretation of one seed, not an established property.
+
+### Calibration is a source of run-to-run variance
+
+Which training batches calibration happens to see determines the activation
+ranges, and therefore the quantized model. The training loader shuffles, so early
+unseeded runs of the *same* checkpoint produced test macro-F1 differences of
+`−0.0176`, `−0.0232`, and `−0.0366` for the current-only model — a factor of two.
+Calibration is now seeded from `train.seed`, and repeat runs are bit-identical.
+
+Sweeping the calibration budget on the most sensitive model shows the seeded
+32-batch result is already at the converged value, so the earlier smaller figures
+were lucky draws rather than the effect of insufficient data:
+
+| Calibration batches | 32 (seeded) | 64 | 128 | 256 |
+|---|---:|---:|---:|---:|
+| Test macro-F1 difference | −0.0366 | −0.0368 | −0.0366 | −0.0378 |
+
+Any future quantization comparison should hold the calibration seed fixed and
+report it, or the noise floor will exceed the effects being measured.
+
+### What this implies for QAT
+
+PTQ was run first precisely to decide whether QAT is worth its cost, and the
+answer differs by model:
+
+- **Past 7 + current + future 7: QAT is not indicated.** A `−0.0006` change is
+  noise, and this variant also gets the largest size reduction. It is the natural
+  int8 deployment candidate.
+- **Past 7 + current: QAT is indicated.** The `−0.0235` loss has to be read against
+  what past context bought in the first place — `+0.039` macro-F1 over
+  current-only. Quantization gives back about **60% of the entire benefit of
+  adding seven past windows**, so the model pays 8× the compute for roughly a
+  third of the accuracy gain.
+- **Current only: QAT is indicated, and this is the worst case.** `−0.0366` on a
+  `0.512` baseline is a 7% relative loss.
+
 ## Training behavior and checkpoint selection
 
 ![Validation macro-F1 for the width-0.25 runs](edge_window_tcn_context_report_assets/validation-training-curves.svg)
@@ -454,6 +656,12 @@ The window-encoder architecture matches the raw model for current-only input and
 
 **Lowest-cost current-only inference:** width 0.25 uses only `0.0010` GFLOPs and `0.267 ms` median CPU time, but its `0.512` macro-F1 leaves substantial accuracy on the table.
 
+**If int8 is on the table:** prefer **past 7 + current + future 7 at width 0.25**.
+It is the only variant quantization is effectively free on (`−0.0006` macro-F1),
+and it takes the largest size reduction (`−35.3%`) and a 4× duty-cycle cut. For a
+causal deployment, budget for QAT rather than assuming PTQ is free — plain PTQ
+costs `−0.0235` on past 7 + current, about 60% of what past context bought.
+
 Before selecting a production configuration:
 
 1. Repeat the key runs with at least 3–5 seeds and report paired means, standard deviations, and confidence intervals.
@@ -493,6 +701,33 @@ uv run imu-edge-train --config configs/benchmark.yaml \
 
 The matched width-0.5 runs use the same commands with `--width-mult 0.5` and the existing run names `edge_window_tcn_current`, `edge_window_tcn_past7_current`, and `edge_window_tcn_past7_current_future7`.
 
+### Int8 post-training quantization
+
+Context length is read from each checkpoint, so no `--context-len` flag is needed;
+passing one that contradicts the checkpoint is rejected rather than silently
+evaluated with the wrong window count.
+
+```bash
+uv run imu-edge-quantize --config configs/benchmark.yaml \
+  --checkpoint experiments/results/edge_window_tcn_wm025_current/checkpoints/best.ckpt \
+  --run-name edge_window_tcn_wm025_current_int8
+
+uv run imu-edge-quantize --config configs/benchmark.yaml \
+  --checkpoint experiments/results/edge_window_tcn_wm025_past7_current/checkpoints/best.ckpt \
+  --run-name edge_window_tcn_wm025_past7_current_int8
+
+uv run imu-edge-quantize --config configs/benchmark.yaml \
+  --checkpoint experiments/results/edge_window_tcn_wm025_centered_scratch/checkpoints/best.ckpt \
+  --run-name edge_window_tcn_wm025_centered_scratch_int8
+```
+
+Each run writes `reports/quantization_comparison.json` with the float32-versus-int8
+deltas and the ONNX artifacts under `onnx/`. Regenerate the two PTQ figures with:
+
+```bash
+uv run python scripts/render_ptq_comparison_figures.py
+```
+
 ## Detailed artifacts
 
 ### Main width-0.25 runs
@@ -502,6 +737,14 @@ The matched width-0.5 runs use the same commands with `--width-mult 0.5` and the
 | Current only | [reports](edge_window_tcn_wm025_current/reports/) | [all subjects](edge_window_tcn_wm025_current/confusion_matrices/test_all_subjects.html) · [per-subject overview](edge_window_tcn_wm025_current/confusion_matrices/test_subjects_overview.html) | [timeline index](edge_window_tcn_wm025_current/plots/index.html) |
 | Past 7 + current | [reports](edge_window_tcn_wm025_past7_current/reports/) | [all subjects](edge_window_tcn_wm025_past7_current/confusion_matrices/test_all_subjects.html) · [per-subject overview](edge_window_tcn_wm025_past7_current/confusion_matrices/test_subjects_overview.html) | [timeline index](edge_window_tcn_wm025_past7_current/plots/index.html) |
 | Past 7 + current + future 7 | [reports](edge_window_tcn_wm025_centered_scratch/reports/) | [all subjects](edge_window_tcn_wm025_centered_scratch/confusion_matrices/test_all_subjects.html) · [per-subject overview](edge_window_tcn_wm025_centered_scratch/confusion_matrices/test_subjects_overview.html) | [timeline index](edge_window_tcn_wm025_centered_scratch/plots/index.html) |
+
+### Int8 quantized runs
+
+| Run | Float32-vs-int8 comparison | Metrics and predictions | Confusion matrices | ONNX artifacts |
+|---|---|---|---|---|
+| Current only | [comparison](edge_window_tcn_wm025_current_int8/reports/quantization_comparison.json) | [reports](edge_window_tcn_wm025_current_int8/reports/) | [all subjects](edge_window_tcn_wm025_current_int8/confusion_matrices/test_all_subjects.html) · [per-subject overview](edge_window_tcn_wm025_current_int8/confusion_matrices/test_subjects_overview.html) | [onnx](edge_window_tcn_wm025_current_int8/onnx/) |
+| Past 7 + current | [comparison](edge_window_tcn_wm025_past7_current_int8/reports/quantization_comparison.json) | [reports](edge_window_tcn_wm025_past7_current_int8/reports/) | [all subjects](edge_window_tcn_wm025_past7_current_int8/confusion_matrices/test_all_subjects.html) · [per-subject overview](edge_window_tcn_wm025_past7_current_int8/confusion_matrices/test_subjects_overview.html) | [onnx](edge_window_tcn_wm025_past7_current_int8/onnx/) |
+| Past 7 + current + future 7 | [comparison](edge_window_tcn_wm025_centered_scratch_int8/reports/quantization_comparison.json) | [reports](edge_window_tcn_wm025_centered_scratch_int8/reports/) | [all subjects](edge_window_tcn_wm025_centered_scratch_int8/confusion_matrices/test_all_subjects.html) · [per-subject overview](edge_window_tcn_wm025_centered_scratch_int8/confusion_matrices/test_subjects_overview.html) | [onnx](edge_window_tcn_wm025_centered_scratch_int8/onnx/) |
 
 ### Width-0.5 reference runs
 

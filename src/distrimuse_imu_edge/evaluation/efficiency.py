@@ -12,8 +12,60 @@ from distrimuse_imu_edge.evaluation.energy import (
     DEFAULT_HOP_SIZE_S,
     EnergyProfile,
     estimate_energy,
-    numeric_format_for,
 )
+
+# Module paths whose layers hold int8 weights and run int8 kernels. Covers the
+# eager-mode dynamic/static quantised modules and their fused variants.
+_QUANTIZED_MODULE_PREFIXES = (
+    "torch.ao.nn.quantized",
+    "torch.ao.nn.intrinsic.quantized",
+    "torch.nn.quantized",
+    "torch.nn.intrinsic.quantized",
+)
+
+
+def _is_quantized_module(module: nn.Module) -> bool:
+    return type(module).__module__.startswith(_QUANTIZED_MODULE_PREFIXES)
+
+
+def _int8_mac_fraction(summary_result: Any) -> float:
+    """Share of traced MACs that sit in genuinely int8 layers.
+
+    Walks the leaf layers torchinfo recorded and attributes each layer's MACs to
+    either the int8 or the float32 path. Only leaves are counted because
+    torchinfo also reports container modules holding the aggregated MACs of
+    their children, and summing those would double-count.
+
+    Returning a measured fraction rather than trusting the compression label
+    matters because PyTorch dynamic quantisation converts ``Linear``/``GRU``
+    only. A convolution-dominated model can be labelled as quantised while
+    essentially none of its arithmetic actually runs in int8, and treating it as
+    fully int8 would overstate its efficiency several-fold.
+
+    Falls back to ``0.0`` (all float32) whenever the per-layer data is missing
+    or sums to zero, so an unreadable trace understates efficiency rather than
+    inventing it.
+    """
+    try:
+        leaves = [
+            layer
+            for layer in summary_result.summary_list
+            if getattr(layer, "is_leaf_layer", False)
+        ]
+    except AttributeError:
+        return 0.0
+    total = 0
+    int8 = 0
+    for layer in leaves:
+        layer_macs = int(getattr(layer, "macs", 0) or 0)
+        if layer_macs <= 0:
+            continue
+        total += layer_macs
+        if _is_quantized_module(layer.module):
+            int8 += layer_macs
+    if total <= 0:
+        return 0.0
+    return int8 / total
 
 
 def _serialized_size_mb(model: nn.Module) -> float:
@@ -81,6 +133,7 @@ def compute_model_stats(
     latency_repeats: int = 30,
     hop_size_s: float = DEFAULT_HOP_SIZE_S,
     energy_profile: EnergyProfile | str | Mapping[str, Any] | None = None,
+    int8_mac_fraction: float | None = None,
 ) -> dict[str, Any]:
     """Compute a full efficiency profile for a trained model.
 
@@ -128,15 +181,23 @@ def compute_model_stats(
         n_channels: Number of input sensor channels (e.g. 6 for IMU).
         fs: Sampling frequency in Hz (default 104 Hz for this dataset).
         compression: Optional dict describing any compression applied
-            (e.g. ``{"method": "dynamic_quant"}``). Stored as-is in the output,
-            and used to pick int8 versus float32 throughput for the energy
-            estimate.
+            (e.g. ``{"method": "onnx_static_int8"}``). Stored as-is in the output.
+            It is deliberately *not* used to choose int8 versus float32
+            throughput — the int8 MAC share is measured from the traced layers
+            instead, because a compression label says nothing about how much of
+            the arithmetic the quantiser actually converted.
         latency_repeats: Number of timed passes for latency measurement.
         hop_size_s: Seconds between consecutive predictions at deployment, used
             as the energy model's duty-cycle period. Should match the dataset's
             hop size, since one prediction is emitted per hop.
         energy_profile: Hardware profile name, profile object, or override
             mapping for the energy estimate. ``None`` uses the default profile.
+        int8_mac_fraction: Override for the measured int8 MAC share. Leave as
+            ``None`` to measure it from ``model``'s traced layers, which is
+            correct whenever ``model`` is the thing that ships. Pass a value
+            when the deployed artifact is *not* the traced module — for example
+            an int8 ONNX graph exported from a float32 module, where tracing the
+            source would report 0.0 and understate the deployed efficiency.
 
     Returns:
         Dict suitable for writing to ``model_stats.json``.
@@ -149,13 +210,18 @@ def compute_model_stats(
     model_cpu = model.to("cpu").eval()
 
     macs: int | None = None
+    measured_int8_fraction = 0.0
     try:
         from torchinfo import summary as ti_summary
 
         result = ti_summary(model_cpu, input_data=sample, verbose=0)
         macs = int(result.total_mult_adds)
+        measured_int8_fraction = _int8_mac_fraction(result)
     except Exception:
         pass
+    effective_int8_fraction = (
+        measured_int8_fraction if int8_mac_fraction is None else float(int8_mac_fraction)
+    )
 
     stats: dict[str, Any] = {
         "trainable_params": int(trainable),
@@ -174,7 +240,7 @@ def compute_model_stats(
             macs=macs,
             hop_size_s=hop_size_s,
             profile=energy_profile,
-            numeric_format=numeric_format_for(compression),
+            int8_mac_fraction=effective_int8_fraction,
         ),
     }
     stats.update(_cpu_latency_ms(model_cpu, sample, repeats=latency_repeats))

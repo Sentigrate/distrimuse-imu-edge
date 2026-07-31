@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import torch
@@ -11,8 +12,8 @@ from distrimuse_imu_edge.cli.common import (
     effective_context_lengths_for,
     load_runtime_config,
 )
+from distrimuse_imu_edge.data.config import DataConfig
 from distrimuse_imu_edge.compression.pruning import apply_structured_pruning
-from distrimuse_imu_edge.compression.quantization import apply_dynamic_quantization
 from distrimuse_imu_edge.data.datamodule import IMUEdgeDataModule
 from distrimuse_imu_edge.evaluation.efficiency import compute_model_stats
 from distrimuse_imu_edge.evaluation.metrics import classification_report_payload, collect_predictions, predictions_frame
@@ -25,12 +26,100 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="configs/benchmark.yaml")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--model", default=None, help="Optional label override for reports.")
-    parser.add_argument("--method", choices=["dynamic_quant", "structured_prune"], required=True)
+    parser.add_argument(
+        "--method",
+        choices=["structured_prune"],
+        default="structured_prune",
+        help=(
+            # argparse %%-formats help strings, so a literal percent must be doubled.
+            "Compression to apply. For int8 quantization use imu-edge-quantize: "
+            "dynamic quantization was removed because it covers Linear/GRU only "
+            "and this project's models hold ~99%% of their MACs in Conv1d."
+        ),
+    )
     parser.add_argument("--prune-amount", type=float, default=0.25)
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--finetune", action="store_true")
     parser.add_argument("--max-epochs", type=int, default=None)
+    parser.add_argument(
+        "--context-len",
+        type=int,
+        default=None,
+        help=(
+            "Past plus current windows. Default: the value the checkpoint was trained "
+            "with, else data.context_len from config. Forced to 1 for single-window models."
+        ),
+    )
+    parser.add_argument(
+        "--future-context-len",
+        type=int,
+        default=None,
+        help=(
+            "Future look-ahead windows. Default: the value the checkpoint was trained "
+            "with, else data.future_context_len from config. Forced to 0 for "
+            "single-window models."
+        ),
+    )
     return parser
+
+
+def resolve_context_lengths(
+    ckpt: dict[str, Any],
+    *,
+    data_cfg: DataConfig,
+    context_len: int | None,
+    future_context_len: int | None,
+) -> tuple[int, int]:
+    """Pick the ``(context_len, future_context_len)`` to compress and evaluate with.
+
+    Precedence is explicit CLI value, then the context recorded in the
+    checkpoint, then the config. The checkpoint takes priority over the config
+    because a checkpoint is only valid for the context it was trained with:
+    evaluating a model trained on 15 windows against the config's 8 raises no
+    error — ``encode_windows`` only checks ``current_index < n`` — it just
+    silently reports degraded metrics and a wrong efficiency profile.
+    """
+    trained = (ckpt.get("config") or {}).get("data") or {}
+    resolved_context = (
+        context_len
+        if context_len is not None
+        else int(trained.get("context_len", data_cfg.context_len))
+    )
+    resolved_future = (
+        future_context_len
+        if future_context_len is not None
+        else int(trained.get("future_context_len", data_cfg.future_context_len))
+    )
+    return resolved_context, resolved_future
+
+
+def check_context_matches_checkpoint(
+    model_kwargs: dict[str, Any], *, context_len: int, future_context_len: int
+) -> None:
+    """Fail loudly when the chosen context contradicts the saved architecture.
+
+    Window-sequence models bake ``current_index`` (which must equal
+    ``context_len - 1``) and ``bidirectional`` (set when future context exists)
+    into their constructor arguments. A mismatch produces a model that runs but
+    classifies the wrong sequence position or silently loses half its receptive
+    field, so it must be an error rather than a warning.
+    """
+    current_index = model_kwargs.get("current_index")
+    if current_index is not None and int(current_index) != context_len - 1:
+        raise SystemExit(
+            f"context mismatch: checkpoint was built with current_index="
+            f"{current_index}, which requires --context-len {int(current_index) + 1}, "
+            f"but this run resolved --context-len {context_len}. "
+            "Pass the matching value explicitly."
+        )
+    bidirectional = model_kwargs.get("bidirectional")
+    if bidirectional is not None and bool(bidirectional) != (future_context_len > 0):
+        expected = "greater than 0" if bidirectional else "0"
+        raise SystemExit(
+            f"context mismatch: checkpoint was built with bidirectional="
+            f"{bidirectional}, so --future-context-len must be {expected}, "
+            f"but this run resolved {future_context_len}."
+        )
 
 
 def main() -> None:
@@ -41,18 +130,29 @@ def main() -> None:
     model, ckpt = load_checkpoint_model(args.checkpoint, map_location="cpu")
     model_name = args.model or ckpt["model_name"]
     model_kwargs = ckpt.get("model_kwargs", {})
+    data_cfg.context_len, data_cfg.future_context_len = resolve_context_lengths(
+        ckpt,
+        data_cfg=data_cfg,
+        context_len=args.context_len,
+        future_context_len=args.future_context_len,
+    )
     data_cfg.context_len, data_cfg.future_context_len = effective_context_lengths_for(
         model_name,
         data_cfg.context_len,
         data_cfg.future_context_len,
     )
+    check_context_matches_checkpoint(
+        model_kwargs,
+        context_len=data_cfg.context_len,
+        future_context_len=data_cfg.future_context_len,
+    )
+    print(
+        f"Compressing {model_name} with context_len={data_cfg.context_len} "
+        f"future_context_len={data_cfg.future_context_len} (method={args.method})"
+    )
     resolved["data"] = data_cfg.to_dict()
-    compression = {"method": args.method}
-    if args.method == "dynamic_quant":
-        model = apply_dynamic_quantization(model)
-    elif args.method == "structured_prune":
-        model = apply_structured_pruning(model, amount=args.prune_amount)
-        compression["amount"] = args.prune_amount
+    compression = {"method": args.method, "amount": args.prune_amount}
+    model = apply_structured_pruning(model, amount=args.prune_amount)
 
     dm = IMUEdgeDataModule(data_cfg)
     dm.setup()
@@ -67,7 +167,7 @@ def main() -> None:
     resolved["compression"] = compression
     resolved["source_checkpoint"] = str(Path(args.checkpoint).expanduser())
 
-    if args.finetune and args.method != "dynamic_quant":
+    if args.finetune:
         train_model(
             model=model,
             model_name=model_name,
@@ -81,7 +181,7 @@ def main() -> None:
         print(output_dir)
         return
 
-    device = torch.device("cpu") if args.method == "dynamic_quant" else resolve_device(train_cfg.device)
+    device = resolve_device(train_cfg.device)
     model = model.to(device).eval()
     val_true, val_pred, val_prob = collect_predictions(model, dm.val_loader(), device=device)
     test_true, test_pred, test_prob = collect_predictions(model, dm.test_loader(), device=device)

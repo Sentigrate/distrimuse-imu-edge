@@ -6,8 +6,6 @@ import argparse
 from copy import deepcopy
 from pathlib import Path
 
-import pandas as pd
-import torch
 
 from distrimuse_imu_edge.cli.common import (
     SINGLE_WINDOW_MODELS,
@@ -15,16 +13,9 @@ from distrimuse_imu_edge.cli.common import (
     load_runtime_config,
     model_kwargs_for,
 )
-from distrimuse_imu_edge.compression.quantization import apply_dynamic_quantization
+from distrimuse_imu_edge.cli.quantize import quantize_checkpoint
 from distrimuse_imu_edge.data.datamodule import IMUEdgeDataModule
 from distrimuse_imu_edge.evaluation.aggregate import aggregate_results
-from distrimuse_imu_edge.evaluation.efficiency import compute_model_stats
-from distrimuse_imu_edge.evaluation.metrics import (
-    classification_report_payload,
-    collect_predictions,
-    predictions_frame,
-)
-from distrimuse_imu_edge.evaluation.reports import write_run_reports
 from distrimuse_imu_edge.models import build_model
 from distrimuse_imu_edge.training.distillation import load_teacher
 from distrimuse_imu_edge.training.runner import load_checkpoint_model, resolve_device, train_model
@@ -56,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--compress",
         action="store_true",
-        help="Apply dynamic quantization to each distilled checkpoint after training.",
+        help="Statically quantize each distilled checkpoint to int8 ONNX after training.",
     )
     p.add_argument(
         "--skip-existing",
@@ -179,9 +170,15 @@ def _run_quantize(
     dm: IMUEdgeDataModule,
     data_cfg,
     resolved_base: dict,
+    train_cfg,
     output_root: Path,
     skip_existing: bool,
 ) -> None:
+    """Quantize one distilled checkpoint to int8 ONNX.
+
+    Delegates to the same ``quantize_checkpoint`` the ``imu-edge-quantize`` CLI
+    uses, so the pipeline and the standalone command cannot diverge.
+    """
     if not source_ckpt.exists():
         print(f"[warn] missing checkpoint for quantization: {source_ckpt}")
         return
@@ -191,87 +188,28 @@ def _run_quantize(
         width_mult=wm,
         context_len=data_cfg.context_len,
         future_context_len=data_cfg.future_context_len,
-        suffix="dynamic_quant",
+        suffix="int8",
     )
     out = output_root / run_name
-    if (out / "checkpoints" / "best.ckpt").exists() and skip_existing:
+    # The deployable artifact is the ONNX graph, not a torch checkpoint.
+    if (out / "onnx" / "model_int8.onnx").exists() and skip_existing:
         print(f"[skip] {run_name}")
         return
 
-    print(f"  Quantizing {student_name} wm={wm} → {run_name}")
+    print(f"  Quantizing {student_name} wm={wm} -> {run_name}")
     model, ckpt_data = load_checkpoint_model(str(source_ckpt), map_location="cpu")
-    model_kwargs = ckpt_data.get("model_kwargs", {})
-    model = apply_dynamic_quantization(model).eval()
-    compression = {"method": "dynamic_quant"}
-
-    cpu = torch.device("cpu")
-    val_true, val_pred, val_prob = collect_predictions(model, dm.val_loader(), device=cpu)
-    test_true, test_pred, test_prob = collect_predictions(model, dm.test_loader(), device=cpu)
-
-    metrics = {
-        "model": student_name,
-        "model_kwargs": model_kwargs,
-        **classification_report_payload(
-            y_true=val_true, y_pred=val_pred, y_prob=val_prob,
-            n_classes=data_cfg.n_classes, prefix="val",
-        ),
-        **classification_report_payload(
-            y_true=test_true, y_pred=test_pred, y_prob=test_prob,
-            n_classes=data_cfg.n_classes, prefix="test",
-        ),
-    }
-    stats = compute_model_stats(
-        model,
-        context_len=data_cfg.context_len,
-        future_context_len=data_cfg.future_context_len,
-        window_size_s=data_cfg.window_size_s,
-        n_channels=len(data_cfg.sensor_cols),
-        compression=compression,
-        hop_size_s=data_cfg.hop_size_s,
-        energy_profile=resolved_base.get("energy"),
-    )
-    predictions = pd.concat(
-        [
-            predictions_frame(
-                split="val",
-                y_true=val_true,
-                y_pred=val_pred,
-                y_prob=val_prob,
-                metadata=dm.split_metadata("val"),
-            ),
-            predictions_frame(
-                split="test",
-                y_true=test_true,
-                y_pred=test_pred,
-                y_prob=test_prob,
-                metadata=dm.split_metadata("test"),
-            ),
-        ],
-        ignore_index=True,
-    )
-    resolved = {
-        **deepcopy(resolved_base),
-        "compression": compression,
-        "source_checkpoint": str(source_ckpt),
-    }
-    (out / "checkpoints").mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "model_name": student_name,
-            "model_kwargs": model_kwargs,
-            "state_dict": model.state_dict(),
-            "compression": compression,
-        },
-        out / "checkpoints" / "best.ckpt",
-    )
-    write_run_reports(
+    quantize_checkpoint(
+        model=model,
+        model_name=student_name,
+        model_kwargs=ckpt_data.get("model_kwargs", {}),
+        dm=dm,
+        data_cfg=data_cfg,
+        resolved=deepcopy(resolved_base),
         output_dir=out,
-        metrics=metrics,
-        model_stats=stats,
-        predictions=predictions,
-        resolved_config=resolved,
+        source_checkpoint=str(source_ckpt),
+        seed=train_cfg.seed,
     )
-    print(f"    → {out}")
+    print(f"    -> {out}")
 
 
 def main() -> None:
@@ -333,9 +271,10 @@ def main() -> None:
 
     # Step 3: compress (optional)
     if args.compress:
-        _divider("Applying dynamic quantization to distilled models")
+        _divider("Quantizing distilled models to int8 ONNX")
         for student_name, wm, ckpt in distilled:
             _run_quantize(
+                train_cfg=train_cfg,
                 student_name=student_name,
                 wm=wm,
                 source_ckpt=ckpt,

@@ -103,15 +103,6 @@ class EnergyProfile:
     battery_voltage_v: float
     notes: str = ""
 
-    def macs_per_cycle(self, numeric_format: str) -> float:
-        if numeric_format == INT8:
-            return self.macs_per_cycle_int8
-        if numeric_format == FLOAT32:
-            return self.macs_per_cycle_float32
-        raise ValueError(
-            f"unknown numeric_format {numeric_format!r}; expected {INT8!r} or {FLOAT32!r}"
-        )
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -274,17 +265,13 @@ def resolve_profile(spec: EnergyProfile | str | Mapping[str, Any] | None) -> Ene
     return replace(base, name=f"{base_name}+overrides", **overrides)
 
 
-def numeric_format_for(compression: Mapping[str, Any] | None) -> str:
-    """Infer the deployed numeric format from a compression descriptor.
-
-    Quantisation changes per-cycle MAC throughput by roughly 4x on a scalar
-    FPU, so guessing wrong biases the energy estimate by the same factor.
-    Anything mentioning quantisation counts as int8; everything else — no
-    compression, or pruning alone, which removes weights without changing the
-    arithmetic width — stays float32.
-    """
-    method = str((compression or {}).get("method", "none")).lower()
-    return INT8 if "quant" in method else FLOAT32
+def describe_numeric_format(int8_mac_fraction: float) -> str:
+    """Label a MAC mix for reporting: pure int8, pure float32, or mixed."""
+    if int8_mac_fraction >= 1.0:
+        return INT8
+    if int8_mac_fraction <= 0.0:
+        return FLOAT32
+    return f"mixed ({int8_mac_fraction:.1%} int8)"
 
 
 def estimate_energy(
@@ -292,7 +279,7 @@ def estimate_energy(
     macs: int | None,
     hop_size_s: float = DEFAULT_HOP_SIZE_S,
     profile: EnergyProfile | str | Mapping[str, Any] | None = None,
-    numeric_format: str = FLOAT32,
+    int8_mac_fraction: float = 0.0,
 ) -> dict[str, Any]:
     """Estimate per-inference energy, average power, and battery life.
 
@@ -304,15 +291,27 @@ def estimate_energy(
             dataset's hop size, since one prediction is emitted per hop.
         profile: Profile, profile name, or override mapping. See
             ``resolve_profile``.
-        numeric_format: ``"int8"`` or ``"float32"``. Selects which per-cycle
-            throughput figure applies.
+        int8_mac_fraction: Share of this model's MACs executed in int8, in
+            ``[0, 1]``. Time adds across the two arithmetic paths, so the
+            active time is the sum of each path's own cost rather than a single
+            format's::
+
+                t_active = (macs_int8 / mpc_int8 + macs_f32 / mpc_f32) / f_clock
+
+            A fraction rather than a format flag matters because partial
+            quantisation is the common case: a quantiser may convert only some
+            operator types, so a convolution-dominated model can be nominally
+            "quantised" while almost none of its MACs actually run in int8. Assuming a single
+            format for such a model overstates efficiency by up to the full
+            int8-to-float32 throughput ratio.
 
     Returns:
         Dict with ``energy_per_inference_mj``, ``avg_power_mw``,
         ``est_battery_life_h``, ``est_battery_life_days``,
         ``active_time_per_inference_ms``, ``duty_cycle``,
-        ``real_time_feasible``, ``hop_size_s``, ``numeric_format``, and an
-        ``assumptions`` block echoing the full profile.
+        ``real_time_feasible``, ``hop_size_s``, ``numeric_format``,
+        ``int8_mac_fraction``, and an ``assumptions`` block echoing the full
+        profile.
 
         ``real_time_feasible`` is False when a single inference takes longer
         than the hop — the device cannot keep up, so ``avg_power_mw`` saturates
@@ -320,22 +319,31 @@ def estimate_energy(
     """
     if hop_size_s <= 0:
         raise ValueError(f"hop_size_s must be positive, got {hop_size_s}")
-    resolved = resolve_profile(profile)
-    macs_per_cycle = resolved.macs_per_cycle(numeric_format)
-    if macs_per_cycle <= 0:
+    if not 0.0 <= int8_mac_fraction <= 1.0:
         raise ValueError(
-            f"profile {resolved.name!r} has non-positive macs_per_cycle for {numeric_format!r}"
+            f"int8_mac_fraction must be in [0, 1], got {int8_mac_fraction}"
         )
+    resolved = resolve_profile(profile)
+    mpc_int8 = resolved.macs_per_cycle_int8
+    mpc_float32 = resolved.macs_per_cycle_float32
+    if mpc_int8 <= 0 or mpc_float32 <= 0:
+        raise ValueError(f"profile {resolved.name!r} has non-positive macs_per_cycle")
+    # Harmonic blend: each path contributes its own time, so the effective
+    # throughput is dominated by whichever format carries the most MACs.
+    effective_macs_per_cycle = 1.0 / (
+        int8_mac_fraction / mpc_int8 + (1.0 - int8_mac_fraction) / mpc_float32
+    )
+    numeric_format = describe_numeric_format(int8_mac_fraction)
 
     assumptions = {
         **resolved.to_dict(),
-        "macs_per_cycle_used": macs_per_cycle,
+        "macs_per_cycle_used": round(effective_macs_per_cycle, 6),
         "model": (
             "E = P_active * t_active + P_sleep * t_sleep, "
-            "t_active = MACs / (macs_per_cycle * f_clock). "
+            "t_active = (macs_int8 / mpc_int8 + macs_f32 / mpc_f32) / f_clock. "
             "Compute only: excludes sensor sampling, radio, and memory-movement "
-            "energy. Proportional to MACs by construction, so it does not rank "
-            "models differently from the gmacs field."
+            "energy. Proportional to MACs at a fixed format mix, so it does not "
+            "rank equally-quantised models differently from the gmacs field."
         ),
     }
     if macs is None:
@@ -349,10 +357,11 @@ def estimate_energy(
             "real_time_feasible": None,
             "hop_size_s": float(hop_size_s),
             "numeric_format": numeric_format,
+            "int8_mac_fraction": float(int8_mac_fraction),
             "assumptions": assumptions,
         }
 
-    t_active_s = float(macs) / (macs_per_cycle * resolved.f_clock_hz)
+    t_active_s = float(macs) / (effective_macs_per_cycle * resolved.f_clock_hz)
     # mW * s == mJ, so no unit scaling is needed here.
     energy_per_inference_mj = resolved.p_active_mw * t_active_s
     duty_cycle = t_active_s / hop_size_s
@@ -381,5 +390,6 @@ def estimate_energy(
         "real_time_feasible": feasible,
         "hop_size_s": float(hop_size_s),
         "numeric_format": numeric_format,
+        "int8_mac_fraction": float(int8_mac_fraction),
         "assumptions": assumptions,
     }

@@ -6,8 +6,8 @@ from distrimuse_imu_edge.evaluation.energy import (
     DEFAULT_PROFILE_NAME,
     ENERGY_PROFILES,
     EnergyProfile,
+    describe_numeric_format,
     estimate_energy,
-    numeric_format_for,
     resolve_profile,
 )
 
@@ -35,7 +35,7 @@ def test_energy_matches_hand_computed_duty_cycle() -> None:
         macs=100_000_000,
         hop_size_s=1.0,
         profile=_profile(),
-        numeric_format="int8",
+        int8_mac_fraction=1.0,
     )
 
     assert result["active_time_per_inference_ms"] == pytest.approx(500.0)
@@ -55,7 +55,7 @@ def test_sleep_power_is_duty_cycle_weighted_not_added_flat() -> None:
         macs=100_000_000,
         hop_size_s=1.0,
         profile=_profile(p_sleep_mw=1.0),
-        numeric_format="int8",
+        int8_mac_fraction=1.0,
     )
 
     assert result["avg_power_mw"] == pytest.approx(5.5)
@@ -63,14 +63,59 @@ def test_sleep_power_is_duty_cycle_weighted_not_added_flat() -> None:
 
 def test_float32_costs_more_than_int8_on_same_profile() -> None:
     kwargs = {"macs": 10_000_000, "hop_size_s": 1.0, "profile": _profile()}
-    int8 = estimate_energy(**kwargs, numeric_format="int8")
-    float32 = estimate_energy(**kwargs, numeric_format="float32")
+    int8 = estimate_energy(**kwargs, int8_mac_fraction=1.0)
+    float32 = estimate_energy(**kwargs, int8_mac_fraction=0.0)
 
     # 2.0 vs 0.5 MACs/cycle -> exactly 4x the active time and energy.
     assert float32["energy_per_inference_mj"] == pytest.approx(
         4 * int8["energy_per_inference_mj"]
     )
     assert float32["numeric_format"] == "float32"
+    assert int8["numeric_format"] == "int8"
+
+
+def test_partial_quantization_is_weighted_by_mac_share_not_treated_as_int8() -> None:
+    """A nominally-quantised conv model must not be credited full int8 speed.
+
+    This is the failure mode of inferring the format from a compression label:
+    dynamic quantisation converts Linear/GRU but not Conv1d, so a conv-dominated
+    model can be labelled "quantised" while ~0% of its MACs run in int8.
+    """
+    kwargs = {"macs": 10_000_000, "hop_size_s": 10.0, "profile": _profile()}
+    all_float = estimate_energy(**kwargs, int8_mac_fraction=0.0)
+    all_int8 = estimate_energy(**kwargs, int8_mac_fraction=1.0)
+    # What dynamic quant actually achieves on edge_window_tcn: ~0.02% of MACs.
+    barely = estimate_energy(**kwargs, int8_mac_fraction=0.0002)
+
+    assert barely["energy_per_inference_mj"] == pytest.approx(
+        all_float["energy_per_inference_mj"], rel=1e-3
+    )
+    assert barely["energy_per_inference_mj"] > 3.9 * all_int8["energy_per_inference_mj"]
+    assert barely["numeric_format"] == "mixed (0.0% int8)"
+    assert barely["int8_mac_fraction"] == 0.0002
+
+
+def test_half_quantized_time_is_sum_of_both_paths() -> None:
+    # 5M MACs at 2/cycle + 5M at 0.5/cycle on 100 MHz
+    #   = 0.025 s + 0.1 s = 0.125 s active.
+    result = estimate_energy(
+        macs=10_000_000, hop_size_s=1.0, profile=_profile(), int8_mac_fraction=0.5
+    )
+
+    assert result["active_time_per_inference_ms"] == pytest.approx(125.0)
+    assert result["assumptions"]["macs_per_cycle_used"] == pytest.approx(0.8)
+
+
+def test_estimate_energy_rejects_out_of_range_int8_fraction() -> None:
+    for bad in (-0.1, 1.1):
+        with pytest.raises(ValueError):
+            estimate_energy(macs=1000, profile=_profile(), int8_mac_fraction=bad)
+
+
+def test_describe_numeric_format_labels() -> None:
+    assert describe_numeric_format(0.0) == "float32"
+    assert describe_numeric_format(1.0) == "int8"
+    assert describe_numeric_format(0.25) == "mixed (25.0% int8)"
 
 
 def test_infeasible_duty_cycle_is_flagged_and_power_saturates() -> None:
@@ -79,7 +124,7 @@ def test_infeasible_duty_cycle_is_flagged_and_power_saturates() -> None:
         macs=1_000_000_000,
         hop_size_s=1.0,
         profile=_profile(),
-        numeric_format="int8",
+        int8_mac_fraction=1.0,
     )
 
     assert result["real_time_feasible"] is False
@@ -89,8 +134,8 @@ def test_infeasible_duty_cycle_is_flagged_and_power_saturates() -> None:
 
 def test_energy_is_proportional_to_macs() -> None:
     """Documents the key limitation: ranking is identical to ranking by MACs."""
-    small = estimate_energy(macs=1_000_000, profile=_profile(), numeric_format="int8")
-    large = estimate_energy(macs=8_000_000, profile=_profile(), numeric_format="int8")
+    small = estimate_energy(macs=1_000_000, profile=_profile(), int8_mac_fraction=1.0)
+    large = estimate_energy(macs=8_000_000, profile=_profile(), int8_mac_fraction=1.0)
 
     assert large["energy_per_inference_mj"] == pytest.approx(
         8 * small["energy_per_inference_mj"]
@@ -122,14 +167,6 @@ def test_resolve_profile_rejects_unknown_names_and_fields() -> None:
         resolve_profile("not_a_real_chip")
     with pytest.raises(ValueError):
         resolve_profile({"profile": DEFAULT_PROFILE_NAME, "p_activ_mw": 10.0})
-
-
-def test_numeric_format_inferred_from_compression() -> None:
-    assert numeric_format_for(None) == "float32"
-    assert numeric_format_for({"method": "none"}) == "float32"
-    assert numeric_format_for({"method": "dynamic_quant"}) == "int8"
-    # Pruning removes weights but leaves the arithmetic width alone.
-    assert numeric_format_for({"method": "l1_prune"}) == "float32"
 
 
 def test_estimate_energy_rejects_non_positive_hop() -> None:

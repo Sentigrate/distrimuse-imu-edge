@@ -15,12 +15,15 @@ dependencies = [
     "tqdm>=4.66",
     "plotly>=5.0",
     "torchinfo>=1.8.0",
+    "onnx>=1.22.0",
+    "onnxruntime>=1.28.0",
 ]
 
 [project.scripts]
 imu-edge-train = "distrimuse_imu_edge.cli.train:main"
 imu-edge-distill = "distrimuse_imu_edge.cli.distill:main"
 imu-edge-compress = "distrimuse_imu_edge.cli.compress:main"
+imu-edge-quantize = "distrimuse_imu_edge.cli.quantize:main"
 imu-edge-benchmark = "distrimuse_imu_edge.cli.benchmark:main"
 imu-edge-pipeline = "distrimuse_imu_edge.cli.pipeline:main"
 imu-edge-prepare-wisdm = "distrimuse_imu_edge.cli.prepare_wisdm:main"

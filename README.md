@@ -15,8 +15,8 @@ for edge deployment.
   windows, matching streaming inference constraints, plus explicit
   bidirectional look-ahead experiments.
 - Distills a larger teacher into compact student models.
-- Applies compression helpers such as dynamic quantization and structured
-  pruning.
+- Quantizes trained models to int8 via export-time static post-training
+  quantization, and applies structured pruning.
 - Writes comparable benchmark reports: macro F1, per-class F1, confusion
   matrices, prediction parquet files, parameter counts, serialized model size,
   FLOPs/MACs estimates, and CPU latency.
@@ -34,7 +34,7 @@ src/distrimuse_imu_edge/
   data/                          Split loading, windowing, sequence datasets
   models/                        Teacher, baseline, and edge architectures
   training/                      Supervised training and distillation
-  compression/                   Quantization and pruning helpers
+  compression/                   Int8 ONNX quantization and pruning helpers
   evaluation/                    Metrics, model stats, plots, aggregation
 tests/                           Unit and smoke tests
 experiments/results/             Generated outputs, ignored except .gitkeep
@@ -161,8 +161,8 @@ uv run imu-edge-pipeline --config configs/benchmark.yaml --compress
 ```
 
 The pipeline trains the teacher, distills configured students across configured
-width multipliers, optionally dynamic-quantizes the distilled checkpoints, then
-aggregates the benchmark table and plots.
+width multipliers, optionally quantizes the distilled checkpoints to int8 ONNX,
+then aggregates the benchmark table and plots.
 
 For a quick smoke run:
 
@@ -185,10 +185,14 @@ uv run imu-edge-distill \
   --student edge_window_tcn \
   --width-mult 0.5
 
+uv run imu-edge-quantize \
+  --config configs/benchmark.yaml \
+  --checkpoint experiments/results/edge_window_tcn_wm0.5_ctx8_distilled/checkpoints/best.ckpt
+
 uv run imu-edge-compress \
   --config configs/benchmark.yaml \
   --checkpoint experiments/results/edge_window_tcn_wm0.5_ctx8_distilled/checkpoints/best.ckpt \
-  --method dynamic_quant
+  --method structured_prune --prune-amount 0.25
 
 uv run imu-edge-benchmark --results-dir experiments/results
 ```
@@ -307,6 +311,7 @@ size, MAC, and latency fields:
   "real_time_feasible": true,
   "hop_size_s": 1.0,
   "numeric_format": "float32",
+  "int8_mac_fraction": 0.0,
   "assumptions": { "name": "nrf52840_m4f_64mhz", "...": "..." }
 }
 ```
@@ -314,16 +319,26 @@ size, MAC, and latency fields:
 The model is the standard duty-cycle estimate used in embedded engineering:
 
 ```text
-t_active     = MACs / (macs_per_cycle * f_clock)
+t_active     = (macs_int8 / mpc_int8 + macs_f32 / mpc_f32) / f_clock
 E_inference  = P_active * t_active
 P_avg        = P_active * duty + P_sleep * (1 - duty)    duty = t_active / hop
 battery_life = capacity_mAh * V / P_avg
 ```
 
 `hop_size_s` comes from `data.hop_size_s`, since one prediction is emitted per
-hop. `numeric_format` is inferred from the run's compression method, because
-int8 kernels sustain roughly 4x the MACs per cycle that float32 kernels do on a
-scalar FPU.
+hop.
+
+`int8_mac_fraction` is **measured from the traced layers**, not inferred from the
+compression label. int8 kernels sustain roughly 4x the MACs per cycle that
+float32 kernels do on a scalar FPU, so the split matters — but partial
+quantisation is the normal case, and a label does not say how much of the
+arithmetic was actually converted. It is also why PyTorch dynamic quantisation
+was removed from this repo: it converts `Linear`/`GRU` and not `Conv1d`, so
+`edge_window_tcn` — about 99% Conv1d MACs — came out at roughly `0.0` int8 and a
+`1.8%` smaller state dict. Real int8 for a convolutional model has to come from
+export-time quantisation, which is what `imu-edge-quantize` does; `compute_model_stats`
+accepts an explicit `int8_mac_fraction` so the exported artifact's measured share
+is credited rather than the traced float32 source's.
 
 ### Read this before quoting the numbers
 

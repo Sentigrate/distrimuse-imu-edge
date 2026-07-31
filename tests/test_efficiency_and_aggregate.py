@@ -4,6 +4,7 @@ import json
 
 import pandas as pd
 import pytest
+import torch
 
 from distrimuse_imu_edge.evaluation.aggregate import aggregate_results
 from distrimuse_imu_edge.evaluation.efficiency import compute_model_stats
@@ -60,7 +61,12 @@ def test_efficiency_energy_uses_hop_and_profile_from_caller() -> None:
     assert slow_hop["energy"]["est_battery_life_h"] > fast_hop["energy"]["est_battery_life_h"]
 
 
-def test_efficiency_energy_credits_quantization_with_int8_throughput() -> None:
+def test_compression_label_alone_does_not_grant_int8_energy() -> None:
+    """A `dynamic_quant` label on an unquantised model must change nothing.
+
+    The int8 MAC share is measured from the traced layers, so claiming
+    compression in the descriptor cannot buy a cheaper energy estimate.
+    """
     model = build_model("edge_cnn", n_classes=3, input_channels=6, width_mult=0.25)
     kwargs: dict = {
         "context_len": 1,
@@ -69,14 +75,84 @@ def test_efficiency_energy_credits_quantization_with_int8_throughput() -> None:
         "fs": 100,
         "latency_repeats": 2,
     }
-    float32 = compute_model_stats(model, **kwargs, compression=None)
-    quantized = compute_model_stats(model, **kwargs, compression={"method": "dynamic_quant"})
+    plain = compute_model_stats(model, **kwargs, compression=None)
+    mislabelled = compute_model_stats(model, **kwargs, compression={"method": "dynamic_quant"})
 
-    assert float32["energy"]["numeric_format"] == "float32"
-    assert quantized["energy"]["numeric_format"] == "int8"
+    assert plain["energy"]["numeric_format"] == "float32"
+    assert mislabelled["energy"]["numeric_format"] == "float32"
+    assert mislabelled["energy"]["int8_mac_fraction"] == 0.0
+    assert mislabelled["energy"]["energy_per_inference_mj"] == pytest.approx(
+        plain["energy"]["energy_per_inference_mj"]
+    )
+
+
+def test_int8_mac_fraction_counts_only_quantized_leaf_layers() -> None:
+    """The share must come from leaves, and only genuinely-int8 ones.
+
+    torchinfo also reports container modules holding their children's aggregated
+    MACs, so summing every entry would double-count.
+    """
+    from distrimuse_imu_edge.evaluation.efficiency import _int8_mac_fraction
+
+    class _FakeQuantizedConv:
+        pass
+
+    _FakeQuantizedConv.__module__ = "torch.ao.nn.quantized.modules.conv"
+
+    class _Layer:
+        def __init__(self, module, macs, is_leaf_layer=True):
+            self.module = module
+            self.macs = macs
+            self.is_leaf_layer = is_leaf_layer
+
+    class _Summary:
+        def __init__(self, layers):
+            self.summary_list = layers
+
+    float_conv = torch.nn.Conv1d(4, 4, 3)
+    quant_conv = _FakeQuantizedConv()
+
+    # A container carrying the aggregated total must be ignored.
+    summary = _Summary(
+        [
+            _Layer(torch.nn.Sequential(), 1_000, is_leaf_layer=False),
+            _Layer(quant_conv, 750),
+            _Layer(float_conv, 250),
+            _Layer(torch.nn.ReLU(), 0),
+        ]
+    )
+    assert _int8_mac_fraction(summary) == pytest.approx(0.75)
+
+    assert _int8_mac_fraction(_Summary([_Layer(float_conv, 100)])) == 0.0
+    assert _int8_mac_fraction(_Summary([_Layer(quant_conv, 100)])) == 1.0
+    # No MAC-bearing leaves must understate rather than invent efficiency.
+    assert _int8_mac_fraction(_Summary([_Layer(torch.nn.ReLU(), 0)])) == 0.0
+    assert _int8_mac_fraction(object()) == 0.0
+
+
+def test_int8_mac_fraction_override_beats_the_traced_value() -> None:
+    """Needed when the deployed artifact is not the traced module.
+
+    An int8 ONNX graph exported from a float32 module traces as all-float32, so
+    the caller must be able to supply the share it measured on the real artifact.
+    """
+    model = build_model("edge_cnn", n_classes=3, input_channels=6, width_mult=0.25)
+    kwargs: dict = {
+        "context_len": 1,
+        "window_size_s": 0.2,
+        "n_channels": 6,
+        "fs": 100,
+        "latency_repeats": 2,
+    }
+    traced = compute_model_stats(model, **kwargs)
+    overridden = compute_model_stats(model, **kwargs, int8_mac_fraction=1.0)
+
+    assert traced["energy"]["numeric_format"] == "float32"
+    assert overridden["energy"]["numeric_format"] == "int8"
+    assert overridden["energy"]["int8_mac_fraction"] == 1.0
     assert (
-        quantized["energy"]["energy_per_inference_mj"]
-        < float32["energy"]["energy_per_inference_mj"]
+        overridden["energy"]["energy_per_inference_mj"]
+        < traced["energy"]["energy_per_inference_mj"]
     )
 
 

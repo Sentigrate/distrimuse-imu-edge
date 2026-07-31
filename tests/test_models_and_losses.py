@@ -4,7 +4,6 @@ import pytest
 import torch
 import torch.nn.functional as functional
 
-from distrimuse_imu_edge.compression.quantization import apply_dynamic_quantization
 from distrimuse_imu_edge.models import build_model, list_models
 from distrimuse_imu_edge.models.edge_window_sequence import _SequenceConv
 from distrimuse_imu_edge.training.losses import distillation_loss
@@ -178,21 +177,3 @@ def test_distillation_loss_combines_ce_and_kl() -> None:
     assert ce_only.item() > 0
     assert distilled.item() > 0
     assert distilled.item() != ce_only.item()
-
-
-def test_window_gru_supports_dynamic_quantization() -> None:
-    if not torch.backends.quantized.supported_engines:
-        pytest.skip("no dynamic quantization engine is available")
-    model = build_model(
-        "edge_window_gru",
-        n_classes=3,
-        input_channels=6,
-        width_mult=0.25,
-        current_index=2,
-    )
-    quantized = apply_dynamic_quantization(model)
-
-    with torch.no_grad():
-        output = quantized(torch.randn(2, 3, 20, 6))
-
-    assert output.shape == (2, 3)
