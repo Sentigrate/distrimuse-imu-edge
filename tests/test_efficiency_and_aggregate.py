@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pandas as pd
+import pytest
 
 from distrimuse_imu_edge.evaluation.aggregate import aggregate_results
 from distrimuse_imu_edge.evaluation.efficiency import compute_model_stats
@@ -24,6 +25,89 @@ def test_efficiency_report_contains_edge_metrics() -> None:
     assert "gflops" in stats
     assert "cpu_latency_median_ms" in stats
     assert stats["input_shape"] == [1, 8, 20, 6]
+    assert stats["energy"]["energy_per_inference_mj"] > 0
+    assert stats["energy"]["assumptions"]["name"]
+
+
+def test_efficiency_energy_uses_hop_and_profile_from_caller() -> None:
+    model = build_model(
+        "edge_window_tcn",
+        n_classes=3,
+        input_channels=6,
+        width_mult=0.25,
+        current_index=7,
+    )
+    kwargs: dict = {
+        "context_len": 8,
+        "window_size_s": 0.2,
+        "n_channels": 6,
+        "fs": 100,
+        "latency_repeats": 2,
+    }
+    slow_hop = compute_model_stats(
+        model, **kwargs, hop_size_s=10.0, energy_profile="nrf52840_m4f_64mhz"
+    )
+    fast_hop = compute_model_stats(
+        model, **kwargs, hop_size_s=1.0, energy_profile="nrf52840_m4f_64mhz"
+    )
+
+    # Per-inference energy is a model property and must not move with the hop.
+    assert slow_hop["energy"]["energy_per_inference_mj"] == pytest.approx(
+        fast_hop["energy"]["energy_per_inference_mj"]
+    )
+    # Average power is a duty-cycle property and must scale with the hop.
+    assert slow_hop["energy"]["avg_power_mw"] < fast_hop["energy"]["avg_power_mw"]
+    assert slow_hop["energy"]["est_battery_life_h"] > fast_hop["energy"]["est_battery_life_h"]
+
+
+def test_efficiency_energy_credits_quantization_with_int8_throughput() -> None:
+    model = build_model("edge_cnn", n_classes=3, input_channels=6, width_mult=0.25)
+    kwargs: dict = {
+        "context_len": 1,
+        "window_size_s": 0.2,
+        "n_channels": 6,
+        "fs": 100,
+        "latency_repeats": 2,
+    }
+    float32 = compute_model_stats(model, **kwargs, compression=None)
+    quantized = compute_model_stats(model, **kwargs, compression={"method": "dynamic_quant"})
+
+    assert float32["energy"]["numeric_format"] == "float32"
+    assert quantized["energy"]["numeric_format"] == "int8"
+    assert (
+        quantized["energy"]["energy_per_inference_mj"]
+        < float32["energy"]["energy_per_inference_mj"]
+    )
+
+
+def test_runtime_config_resolves_energy_profile_round_trip(tmp_path) -> None:
+    """The profile written to config.resolved.yaml must be re-readable."""
+    from distrimuse_imu_edge.cli.common import load_runtime_config
+    from distrimuse_imu_edge.evaluation.energy import resolve_profile
+
+    config = tmp_path / "cfg.yaml"
+    config.write_text(
+        "data:\n  campaign: test\nenergy:\n  profile: stm32l4_m4f_80mhz\n  p_active_mw: 12.5\n",
+        encoding="utf-8",
+    )
+
+    _, _, resolved = load_runtime_config(config)
+
+    assert resolved["energy"]["name"] == "stm32l4_m4f_80mhz+overrides"
+    assert resolved["energy"]["p_active_mw"] == 12.5
+    # Feeding the resolved dict back must reproduce the same profile, not raise.
+    assert resolve_profile(resolved["energy"]).p_active_mw == 12.5
+    assert resolve_profile(resolved["energy"]).name == "stm32l4_m4f_80mhz+overrides"
+
+
+def test_runtime_config_rejects_bad_energy_profile_at_load_time(tmp_path) -> None:
+    config = tmp_path / "cfg.yaml"
+    config.write_text("data:\n  campaign: test\nenergy:\n  profile: nope\n", encoding="utf-8")
+
+    from distrimuse_imu_edge.cli.common import load_runtime_config
+
+    with pytest.raises(KeyError):
+        load_runtime_config(config)
 
 
 def test_aggregate_sorts_by_test_f1(tmp_path) -> None:
@@ -37,6 +121,71 @@ def test_aggregate_sorts_by_test_f1(tmp_path) -> None:
 
     assert df.iloc[0]["run_name"] == "b"
     assert {"test_macro_f1", "gflops", "model_size_mb", "total_params"}.issubset(df.columns)
+
+
+def test_aggregate_surfaces_energy_columns_and_tolerates_absent_energy(tmp_path) -> None:
+    with_energy = tmp_path / "with_energy" / "reports"
+    with_energy.mkdir(parents=True)
+    (with_energy / "metrics.json").write_text(
+        json.dumps({"model": "edge_cnn", "test_macro_f1": 0.7, "val_macro_f1": 0.7}),
+        encoding="utf-8",
+    )
+    (with_energy / "model_stats.json").write_text(
+        json.dumps(
+            {
+                "gflops": 0.03,
+                "model_size_mb": 0.27,
+                "total_params": 63081,
+                "energy": {
+                    "avg_power_mw": 18.45,
+                    "est_battery_life_h": 36.59,
+                    "duty_cycle": 0.92,
+                    "assumptions": {"name": "nrf52840_m4f_64mhz"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # A run predating energy reporting must still aggregate, with nulls.
+    legacy = tmp_path / "legacy" / "reports"
+    legacy.mkdir(parents=True)
+    (legacy / "metrics.json").write_text(
+        json.dumps({"model": "edge_tcn", "test_macro_f1": 0.6, "val_macro_f1": 0.6}),
+        encoding="utf-8",
+    )
+    (legacy / "model_stats.json").write_text(
+        json.dumps({"gflops": 0.01, "model_size_mb": 0.1, "total_params": 100}),
+        encoding="utf-8",
+    )
+
+    df = aggregate_results(tmp_path)
+    energetic = df[df["run_name"] == "with_energy"].iloc[0]
+    old = df[df["run_name"] == "legacy"].iloc[0]
+
+    assert energetic["avg_power_mw"] == 18.45
+    assert energetic["est_battery_life_h"] == 36.59
+    assert energetic["duty_cycle"] == 0.92
+    assert energetic["energy_profile"] == "nrf52840_m4f_64mhz"
+    assert pd.isna(old["avg_power_mw"])
+    assert pd.isna(old["energy_profile"])
+
+
+def test_aggregate_empty_columns_match_populated_columns(tmp_path) -> None:
+    """The empty-frame schema must not drift from the populated one."""
+    populated_dir = tmp_path / "populated"
+    reports = populated_dir / "run" / "reports"
+    reports.mkdir(parents=True)
+    (reports / "metrics.json").write_text(json.dumps({"model": "m", "test_macro_f1": 0.5}), encoding="utf-8")
+    (reports / "model_stats.json").write_text(
+        json.dumps({"gflops": 0.1, "model_size_mb": 0.5, "total_params": 100}),
+        encoding="utf-8",
+    )
+
+    populated = aggregate_results(populated_dir)
+    empty = aggregate_results(tmp_path / "nothing_here")
+
+    assert set(empty.columns) == set(populated.columns)
 
 
 def test_aggregate_keeps_wisdm_pretraining_metrics_separate(tmp_path) -> None:

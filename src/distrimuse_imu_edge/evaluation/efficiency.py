@@ -3,10 +3,17 @@ from __future__ import annotations
 import io
 import statistics
 import time
-from typing import Any
+from typing import Any, Mapping
 
 import torch
 from torch import nn
+
+from distrimuse_imu_edge.evaluation.energy import (
+    DEFAULT_HOP_SIZE_S,
+    EnergyProfile,
+    estimate_energy,
+    numeric_format_for,
+)
 
 
 def _serialized_size_mb(model: nn.Module) -> float:
@@ -72,6 +79,8 @@ def compute_model_stats(
     fs: int = 104,
     compression: dict[str, Any] | None = None,
     latency_repeats: int = 30,
+    hop_size_s: float = DEFAULT_HOP_SIZE_S,
+    energy_profile: EnergyProfile | str | Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute a full efficiency profile for a trained model.
 
@@ -100,7 +109,16 @@ def compute_model_stats(
 
     **CPU latency**
         Wall-clock timing of a single forward pass on CPU. See
-        ``_cpu_latency_ms``.
+        ``_cpu_latency_ms``. Note that this is timed on whatever machine ran
+        the job — a laptop or a training GPU host — so it is a relative
+        comparison between models, not a figure for any target device.
+
+    **Energy (analytic)**
+        Millijoules per inference, average milliwatts, and battery life under
+        a declared hardware profile. Derived from ``macs``, so it re-expresses
+        the MAC count in interpretable units rather than adding a new ranking
+        axis, and it excludes sensor and radio power. See
+        ``distrimuse_imu_edge.evaluation.energy`` for the model and its limits.
 
     Args:
         model: Trained model. Will be moved to CPU and set to eval mode.
@@ -110,8 +128,15 @@ def compute_model_stats(
         n_channels: Number of input sensor channels (e.g. 6 for IMU).
         fs: Sampling frequency in Hz (default 104 Hz for this dataset).
         compression: Optional dict describing any compression applied
-            (e.g. ``{"method": "dynamic_quant"}``). Stored as-is in the output.
+            (e.g. ``{"method": "dynamic_quant"}``). Stored as-is in the output,
+            and used to pick int8 versus float32 throughput for the energy
+            estimate.
         latency_repeats: Number of timed passes for latency measurement.
+        hop_size_s: Seconds between consecutive predictions at deployment, used
+            as the energy model's duty-cycle period. Should match the dataset's
+            hop size, since one prediction is emitted per hop.
+        energy_profile: Hardware profile name, profile object, or override
+            mapping for the energy estimate. ``None`` uses the default profile.
 
     Returns:
         Dict suitable for writing to ``model_stats.json``.
@@ -145,6 +170,12 @@ def compute_model_stats(
         "total_context_len": int(total_context_len),
         "input_shape": [1, int(total_context_len), t, int(n_channels)],
         "compression": compression or {"method": "none"},
+        "energy": estimate_energy(
+            macs=macs,
+            hop_size_s=hop_size_s,
+            profile=energy_profile,
+            numeric_format=numeric_format_for(compression),
+        ),
     }
     stats.update(_cpu_latency_ms(model_cpu, sample, repeats=latency_repeats))
     return stats

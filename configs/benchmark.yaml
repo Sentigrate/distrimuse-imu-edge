@@ -34,6 +34,19 @@ train:
     temperature: 4.0
     alpha: 0.5
 
+# Hardware assumption for the analytic energy estimate in model_stats.json.
+# Available profiles: nrf52840_m4f_64mhz, stm32l4_m4f_80mhz,
+# stm32u5_m33_160mhz, ethos_u55_64_200mhz. Any numeric field may be overridden
+# alongside `profile` once you have measured your own board, e.g.:
+#   energy:
+#     profile: nrf52840_m4f_64mhz
+#     p_active_mw: 17.5
+# The estimate is proportional to MACs and covers compute only — it excludes
+# sensor sampling and radio power, so it ranks models exactly as gmacs does and
+# is not a device-level battery projection. See evaluation/energy.py.
+energy:
+  profile: nrf52840_m4f_64mhz
+
 benchmark:
   models:
     - teacher_causal_cnn

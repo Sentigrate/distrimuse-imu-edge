@@ -77,3 +77,9 @@ def test_one_epoch_training_writes_report_contract(tmp_path) -> None:
     assert (out / "reports" / "config.resolved.yaml").exists()
     metrics = json.loads((out / "reports" / "metrics.json").read_text(encoding="utf-8"))
     assert "test_macro_f1" in metrics
+    # resolved_config above carries no "energy" key, so this also pins the
+    # default-profile fallback for callers that predate energy reporting.
+    stats = json.loads((out / "reports" / "model_stats.json").read_text(encoding="utf-8"))
+    assert stats["energy"]["energy_per_inference_mj"] > 0
+    assert stats["energy"]["assumptions"]["name"] == "nrf52840_m4f_64mhz"
+    assert stats["energy"]["hop_size_s"] == data_cfg.hop_size_s

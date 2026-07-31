@@ -227,6 +227,8 @@ def _run_quantize(
         window_size_s=data_cfg.window_size_s,
         n_channels=len(data_cfg.sensor_cols),
         compression=compression,
+        hop_size_s=data_cfg.hop_size_s,
+        energy_profile=resolved_base.get("energy"),
     )
     predictions = pd.concat(
         [

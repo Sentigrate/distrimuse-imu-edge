@@ -282,6 +282,10 @@ def train_model(
     to build the efficiency profiling input. Pass it when the model consumes
     fewer windows than the dataloader emits, as in privileged-context
     distillation, so the reported FLOPs and latency match deployment.
+
+    The analytic energy estimate reads its hardware profile from
+    ``resolved_config["energy"]``, which ``load_runtime_config`` populates.
+    A caller that omits the key gets the default profile.
     """
     set_seed(train_config.seed)
     device = resolve_device(train_config.device)
@@ -403,6 +407,8 @@ def train_model(
         window_size_s=datamodule.config.window_size_s,
         n_channels=len(datamodule.config.sensor_cols),
         compression=compression,
+        hop_size_s=datamodule.config.hop_size_s,
+        energy_profile=resolved_config.get("energy"),
     )
     predictions = pd.concat(
         [

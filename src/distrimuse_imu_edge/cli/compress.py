@@ -98,6 +98,8 @@ def main() -> None:
         window_size_s=data_cfg.window_size_s,
         n_channels=len(data_cfg.sensor_cols),
         compression=compression,
+        hop_size_s=data_cfg.hop_size_s,
+        energy_profile=resolved.get("energy"),
     )
     predictions = pd.concat(
         [

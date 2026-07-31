@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from distrimuse_imu_edge.data.config import DataConfig, load_config
+from distrimuse_imu_edge.evaluation.energy import resolve_profile
 from distrimuse_imu_edge.training.config import TrainConfig, train_config_from_mapping
 
 SINGLE_WINDOW_MODELS = frozenset({"cnn_har", "tinierhar", "edge_cnn", "edge_tcn"})
@@ -20,11 +21,20 @@ WINDOW_SEQUENCE_MODELS = frozenset(
 
 
 def load_runtime_config(config_path: str | Path) -> tuple[DataConfig, TrainConfig, dict[str, Any]]:
+    """Load a config into ``(DataConfig, TrainConfig, resolved)``.
+
+    ``resolved["energy"]`` holds the hardware profile used for analytic energy
+    estimates. It is resolved here — and eagerly, so a bad profile name fails
+    at startup rather than after training — and read back out by
+    ``train_model``, which keeps the profile off the signature of every
+    ``train_model`` call site.
+    """
     data_cfg, payload = load_config(config_path)
     train_cfg = train_config_from_mapping(payload)
     resolved = {
         "data": data_cfg.to_dict(),
         "train": train_cfg.to_dict(),
+        "energy": resolve_profile(payload.get("energy")).to_dict(),
         "raw": payload,
     }
     return data_cfg, train_cfg, resolved

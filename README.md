@@ -291,9 +291,95 @@ experiments/results/f1_vs_size.html
 Generated caches, checkpoints, metrics, plots, and benchmark outputs are ignored
 by Git.
 
+## Energy Estimates
+
+`reports/model_stats.json` carries an `energy` block alongside the parameter,
+size, MAC, and latency fields:
+
+```json
+"energy": {
+  "energy_per_inference_mj": 18.447176,
+  "avg_power_mw": 18.447952,
+  "est_battery_life_h": 36.589,
+  "est_battery_life_days": 1.525,
+  "active_time_per_inference_ms": 922.358781,
+  "duty_cycle": 0.922359,
+  "real_time_feasible": true,
+  "hop_size_s": 1.0,
+  "numeric_format": "float32",
+  "assumptions": { "name": "nrf52840_m4f_64mhz", "...": "..." }
+}
+```
+
+The model is the standard duty-cycle estimate used in embedded engineering:
+
+```text
+t_active     = MACs / (macs_per_cycle * f_clock)
+E_inference  = P_active * t_active
+P_avg        = P_active * duty + P_sleep * (1 - duty)    duty = t_active / hop
+battery_life = capacity_mAh * V / P_avg
+```
+
+`hop_size_s` comes from `data.hop_size_s`, since one prediction is emitted per
+hop. `numeric_format` is inferred from the run's compression method, because
+int8 kernels sustain roughly 4x the MACs per cycle that float32 kernels do on a
+scalar FPU.
+
+### Read this before quoting the numbers
+
+- **It does not rank models differently from `gmacs`.** Every other term is
+  constant across models, so energy is exactly proportional to MACs. The value
+  is unit translation — "1.5 days on a coin cell" instead of "0.0295 GMACs" —
+  not a new comparison axis.
+- **It is an assumption, not a measurement.** Profile values are
+  order-of-magnitude datasheet-class figures for a part *class*, not readings
+  from a board. The full profile is echoed into `assumptions` so any reader can
+  audit it.
+- **It covers inference only.** Continuous 104 Hz IMU sampling, sensor
+  front-end power, and radio traffic are excluded, and on a real wearable those
+  terms are often larger. `est_battery_life_h` is not a device-level battery
+  projection.
+- **It ignores memory movement.** `P_active` is one constant, so a
+  memory-bound and a compute-bound model with equal MACs get equal energy. The
+  models that handle this properly (Yang, Chen & Sze, CVPR 2017;
+  Accelergy/Timeloop) weight per-level memory accesses explicitly.
+
+For a figure that survives review, measure on the target with a power analyser
+(Joulescope, Otii Arc, Nordic PPK2) or use the MLPerf Tiny energy harness.
+
+### Selecting a profile
+
+```yaml
+energy:
+  profile: nrf52840_m4f_64mhz
+```
+
+Bundled profiles: `nrf52840_m4f_64mhz` (default), `stm32l4_m4f_80mhz`,
+`stm32u5_m33_160mhz`, `ethos_u55_64_200mhz`. Any numeric field can be
+overridden once you have measured your own hardware:
+
+```yaml
+energy:
+  profile: nrf52840_m4f_64mhz
+  p_active_mw: 17.5
+  battery_capacity_mah: 100.0
+  battery_voltage_v: 3.7
+```
+
+An overridden profile is reported as `<base>+overrides` so it can never be
+mistaken for a stock profile. Unknown profile names and unknown field names
+fail at config-load time. See
+[energy.py](src/distrimuse_imu_edge/evaluation/energy.py) for profile
+definitions and the reasoning behind each value.
+
+`benchmark_summary.csv` surfaces `avg_power_mw`, `est_battery_life_h`,
+`duty_cycle`, and `energy_profile`. Runs recorded before energy reporting
+existed aggregate with nulls in those columns.
+
 ## Configuration Notes
 
-Main knobs live under `data`, `train`, and `benchmark` in `configs/*.yaml`.
+Main knobs live under `data`, `train`, `energy`, and `benchmark` in
+`configs/*.yaml`.
 
 Important defaults in `configs/benchmark.yaml`:
 
@@ -305,6 +391,7 @@ Important defaults in `configs/benchmark.yaml`:
 - `data.n_classes: 9`
 - `train.max_epochs: 30`
 - `train.output_root: experiments/results`
+- `energy.profile: nrf52840_m4f_64mhz`
 - `benchmark.models: [teacher_causal_cnn, edge_window_gru, edge_window_tcn]`
 
 If you change the data source or windowing parameters and want to rebuild cached

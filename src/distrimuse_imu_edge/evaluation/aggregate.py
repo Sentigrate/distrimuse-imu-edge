@@ -34,6 +34,9 @@ def aggregate_results(results_dir: str | Path) -> pd.DataFrame:
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         stats = json.loads(stats_path.read_text(encoding="utf-8")) if stats_path.exists() else {}
         is_wisdm = _is_wisdm_pretrain(metrics, run_dir)
+        # Analytic estimate under the run's declared hardware profile; absent
+        # for runs written before energy reporting existed.
+        energy = stats.get("energy") or {}
         rows.append(
             {
                 "run_name": run_dir.name,
@@ -52,6 +55,10 @@ def aggregate_results(results_dir: str | Path) -> pd.DataFrame:
                 "model_size_mb": stats.get("model_size_mb"),
                 "total_params": stats.get("total_params"),
                 "cpu_latency_median_ms": stats.get("cpu_latency_median_ms"),
+                "avg_power_mw": energy.get("avg_power_mw"),
+                "est_battery_life_h": energy.get("est_battery_life_h"),
+                "duty_cycle": energy.get("duty_cycle"),
+                "energy_profile": (energy.get("assumptions") or {}).get("name"),
                 "compression_method": (stats.get("compression") or {}).get("method"),
             }
         )
@@ -69,9 +76,14 @@ def aggregate_results(results_dir: str | Path) -> pd.DataFrame:
                 "future_context_len",
                 "total_context_len",
                 "gflops",
+                "macs",
                 "model_size_mb",
                 "total_params",
                 "cpu_latency_median_ms",
+                "avg_power_mw",
+                "est_battery_life_h",
+                "duty_cycle",
+                "energy_profile",
                 "compression_method",
             ]
         )
