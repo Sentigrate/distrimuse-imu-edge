@@ -102,6 +102,40 @@ genuinely new bout signals for this and the other rare classes (SitDown, LayDown
   the real-vs-synthetic comparison within each context level used identical training
   budgets.
 
+## int8 quantization of the real+synthetic models
+
+Statically quantized each of the three real+synthetic checkpoints to int8 ONNX
+(`imu-edge-quantize`, per-channel `QOperator`, calibrated on that run's own train split —
+so the `past7_current`/`past7_current_future7` calibration sets include the synthetic
+subjects too). Model size is the exported ONNX file, not just the raw parameter count.
+
+| context | fp32 test F1 | int8 test F1 | Δ | fp32 size | int8 size | shrink | pred. agreement |
+|---|---|---|---|---|---|---|---|
+| current | 0.5493 | 0.5063 | **−4.30pp** | 163.4 KiB | 88.5 KiB | 1.85× | 0.870 |
+| past7_current | 0.6126 | 0.6147 | **+0.21pp** | 276.7 KiB | 123.0 KiB | 2.25× | 0.959 |
+| past7_current_future7 | 0.6953 | 0.6792 | −1.62pp | 258.9 KiB | 98.3 KiB | 2.63× | 0.934 |
+
+Quantization is essentially free for both context-aware models (`past7_current` even ticks
+up slightly — within noise) but costs the context-less `current` model meaningfully
+(−4.3pp), concentrated in classes it was already weakest on (Falling −9.5pp, Stand Up
+−7.2pp, Turn −5.7pp). With no temporal context to lean on, its decision boundaries are
+already tight; int8 rounding pushes more predictions across them.
+
+The practical upshot: `past7_current_future7` quantized to int8 (0.679 test F1, 98.3 KiB)
+still beats `current` at full float32 (0.549, 163.4 KiB) by 13pp while being smaller —
+context dominates both data and numerical precision here.
+
+### Per-class int8 deltas (test)
+
+**current**: Not Moving −1.2pp, Walk −4.9pp, Sit Down −5.1pp, Lay Down −2.5pp, Turn −5.7pp,
+Sit Up −0.2pp, Stand Up −7.2pp, **Falling −9.5pp**, Hand −2.5pp — every class regresses.
+
+**past7_current**: mostly flat to slightly positive (Not Moving +0.9pp, Turn +0.7pp,
+Falling +1.4pp); only Sit Up (−1.1pp) and Stand Up (−0.2pp) dip, both within noise.
+
+**past7_current_future7**: Lay Down −3.6pp and Turn −3.2pp take the brunt; Hand −4.2pp;
+Stand Up and Falling actually improve slightly (+0.3pp, +0.6pp).
+
 ## Reproduction
 
 ```bash
@@ -124,4 +158,13 @@ for ctx in "1 0 current" "8 0 past7_current" "8 7 past7_current_future7"; do
         --run-name "edge_window_tcn_${tag}_diffusion_augmented_v35_hand"
 done
 uv run imu-edge-benchmark --results-dir experiments/results
+
+# int8 quantization of each real+synthetic checkpoint (run-name defaults to
+# "<checkpoint's run dir>_int8"; --config must match what the checkpoint was trained with)
+uv run imu-edge-quantize --config configs/synthetic_augmented.yaml \
+    --checkpoint experiments/results/edge_window_tcn_current_diffusion_augmented_v35_hand/checkpoints/best.ckpt
+uv run imu-edge-quantize --config configs/synthetic_augmented.yaml \
+    --checkpoint experiments/results/edge_window_tcn_diffusion_augmented_v35_hand/checkpoints/best.ckpt
+uv run imu-edge-quantize --config configs/synthetic_augmented.yaml \
+    --checkpoint experiments/results/edge_window_tcn_past7_current_future7_diffusion_augmented_v35_hand/checkpoints/best.ckpt
 ```
