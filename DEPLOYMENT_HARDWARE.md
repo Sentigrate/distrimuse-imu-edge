@@ -173,21 +173,68 @@ future context is the **7 s of decision latency**, not compute.
 Even the pessimistic re-encode-everything case (59.7 ms) is comfortably inside
 the 1 s hop and well under the thesis's 333 ms.
 
-### RAM working set (estimate, int8)
+### RAM working set
+
+`compute_model_stats` now reports `peak_activation_kib_fp32` /
+`peak_activation_kib_int8_est` for every run — the largest per-layer
+input+output activation size, i.e. the ping-pong buffer definition Table 4.1 of
+the reference thesis uses. Measured for `edge_window_tcn` at width 0.25:
+
+| Context mode | Peak activation, fp32 (measured) | Peak activation, int8 (naive ÷4) |
+|---|---:|---:|
+| Current only | 39.0 KiB | 9.75 KiB |
+| Past 7 + current | 312.0 KiB | 78.0 KiB |
+| Past 7 + current + future 7 | 585.0 KiB | 146.25 KiB |
+
+These numbers scale linearly with the number of windows (`312 = 39 × 8`,
+`585 = 39 × 15`) because they trace the same **naive re-encode-all-windows**
+input shape used for the `macs`/`gflops` fields — the encode-windows reshape
+puts all `N` windows through the shared CNN encoder as one batch, so the
+biggest layer's ping-pong buffer holds `N` windows' worth of activations at
+once. This is the right number for the current benchmark pipeline's
+comparisons, and the wrong number for a streaming firmware budget, for the same
+reason the naive MACs figures above are the wrong number for firmware: a
+device that encodes one new window per hop and reuses cached embeddings for the
+rest never holds more than *one* window's worth of encoder activations at a
+time, regardless of context length. That hand-derived streaming estimate:
 
 | Item | Size |
 |---|---:|
-| Encoder activation ping-pong peak (16×312 in + 16×312 out) | 9.8 KiB |
+| Encoder activation ping-pong peak, one window (16×312 in + 16×312 out) | 9.8 KiB |
 | Raw window ring buffer (312 × 6, int16) | 3.7 KiB |
 | Embedding ring buffer (15 × 24, int8) | 360 B |
 | Temporal TCN activation peak (24×15 × 2) | 720 B |
 | **Total** | **≈ 15 KiB** |
 
-Against 256 KB of RAM this is not close to a constraint; float32 activations
-(≈ 39 KiB encoder peak) would also fit. **Memory is not the binding constraint on
-this platform — unlike the thesis, where 29.3 KB of free DATA RAM forced
-workspace buffers into higher-latency L3 RAM.** That reframes the compression
-question: quantize for energy and throughput, not to make the model fit.
+Both readings agree at context length 1, where there is only one window to
+begin with (9.75 KiB measured int8 vs. 9.8 KiB hand-derived encoder peak) — the
+gap only opens once `N > 1`, and it opens for the batching reason stated above,
+not because the two calculations disagree about the model.
+
+Against 256 KB of total RAM, these two readings tell different stories, which
+is exactly why the distinction matters:
+
+- **Streaming, either precision (≈ 15 KiB fp32 / ≈ 4 KiB int8):** nowhere near
+  a constraint, with room to spare for the BLE stack and everything else Zephyr
+  needs resident.
+- **Naive full-batch, int8 (up to 146.25 KiB at the widest context):** still
+  fits, but now consumes over half the chip's RAM for activations alone before
+  the radio stack gets anything.
+- **Naive full-batch, float32 (up to 585 KiB at the widest context):**
+  **does not fit at all** — more than double the chip's total RAM. The
+  streaming design is not an optimization here; for the past 7 + current +
+  future 7 configuration in float32, it is the difference between fitting on
+  this part and not.
+
+Model weights are excluded from this budget either way: they live in RRAM
+(execute-in-place, same role as the thesis's QSPI XIP flash for the IWR6843),
+not in the 256 KB RAM this table is about. **Memory is a real constraint for
+the naive deployment path, and not a constraint at all for the streaming
+one** — the opposite framing from the thesis, where 29.3 KB of free DATA RAM
+forced workspace buffers into higher-latency L3 RAM regardless of how the
+model was structured. That is the strongest concrete argument in this document
+for implementing the streaming design rather than treating it as a future
+optimization.
 
 ## Toolchain
 
@@ -268,7 +315,14 @@ Concrete, actionable, and all in this repository rather than in the hardware:
    benchmark, and a convolution inner loop hammering RRAM and SRAM will not draw
    the same current as CoreMark. Treat 7.8 mW as a floor and override it after
    measuring.
-4. **Depthwise separable convolutions are not used, and would help less here than
+4. ~~Peak activation memory was not tracked at all.~~ **Done.**
+   `compute_model_stats` now reports `peak_activation_kib_fp32` and a naive
+   `peak_activation_kib_int8_est`, following the thesis's own "max input+output
+   over all layers" definition. See the RAM working set table above — this is
+   also what turned up the 585 KiB float32 figure that exceeds this chip's
+   256 KB of RAM for the naive full-batch path, which is now the sharpest
+   concrete reason to implement item 6 below rather than defer it.
+5. **Depthwise separable convolutions are not used, and would help less here than
    in the thesis.** The thesis got ~8–9× fewer operations per layer because it was
    replacing 2D 3×3 convolutions. In 1D the reduction is capped near the kernel
    size: 3.81× for conv2 (16→16, k5), 4.32× for conv3 (16→32, k5). Applying it to
@@ -277,7 +331,7 @@ Concrete, actionable, and all in this repository rather than in the hardware:
    kernels are memory-bound so wall-clock gain will be smaller than the MAC gain.
    Given that the cached-embedding budget is already ~4.3 ms against a 1 s hop,
    this is an energy optimization, not a feasibility one.
-5. **Streaming inference is not implemented anywhere.** The embedding cache
+6. **Streaming inference is not implemented anywhere.** The embedding cache
    described above is a firmware-side design, and the accuracy equivalence
    between "re-encode all windows" and "reuse cached embeddings" should be
    verified numerically before it is relied upon. It should hold exactly, because

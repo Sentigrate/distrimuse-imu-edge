@@ -130,6 +130,69 @@ def test_int8_mac_fraction_counts_only_quantized_leaf_layers() -> None:
     assert _int8_mac_fraction(object()) == 0.0
 
 
+def test_peak_activation_bytes_takes_the_largest_layer_not_the_sum() -> None:
+    """Peak activation memory is a ping-pong buffer, not a running total.
+
+    Only one layer's input+output tensors need to be resident at a time, so the
+    reported figure must be the maximum across layers, not the sum of all of
+    them.
+    """
+    from distrimuse_imu_edge.evaluation.efficiency import _peak_activation_bytes
+
+    class _Layer:
+        def __init__(self, input_size, output_size, is_leaf_layer=True):
+            self.input_size = input_size
+            self.output_size = output_size
+            self.is_leaf_layer = is_leaf_layer
+
+    class _Summary:
+        def __init__(self, layers):
+            self.summary_list = layers
+
+    summary = _Summary(
+        [
+            _Layer([1, 6, 312], [1, 16, 312], is_leaf_layer=False),  # container, ignored
+            _Layer([1, 6, 312], [1, 16, 312]),  # 1872 + 4992 = 6864 elements
+            _Layer([1, 16, 312], [1, 16, 312]),  # 4992 + 4992 = 9984 elements, the peak
+            _Layer([1, 16, 156], [1, 9]),  # tiny classifier head
+        ]
+    )
+    # The peak layer alone: (4992 + 4992) elements * 4 bytes (float32).
+    assert _peak_activation_bytes(summary) == 9984 * 4
+
+    # A shape with a negative dimension (torchinfo's recursive-layer marker)
+    # must be skipped rather than crash or corrupt the max.
+    negative = _Summary([_Layer([1, 6, 312], [-1, 16, 312])])
+    assert _peak_activation_bytes(negative) is None
+
+    # No leaves, or an object with no summary_list, understates rather than
+    # invents a figure.
+    assert _peak_activation_bytes(_Summary([])) is None
+    assert _peak_activation_bytes(object()) is None
+
+
+def test_compute_model_stats_reports_peak_activation_memory() -> None:
+    model = build_model(
+        "edge_window_tcn",
+        n_classes=3,
+        input_channels=6,
+        width_mult=0.25,
+        current_index=7,
+    )
+    stats = compute_model_stats(
+        model, context_len=8, window_size_s=0.2, n_channels=6, fs=100, latency_repeats=2
+    )
+
+    assert stats["peak_activation_bytes_fp32"] > 0
+    assert stats["peak_activation_kib_fp32"] == pytest.approx(
+        stats["peak_activation_bytes_fp32"] / 1024, rel=1e-6
+    )
+    # The int8 projection is a straight 4x, not an independently traced value.
+    assert stats["peak_activation_kib_int8_est"] == pytest.approx(
+        stats["peak_activation_kib_fp32"] / 4, rel=1e-6
+    )
+
+
 def test_int8_mac_fraction_override_beats_the_traced_value() -> None:
     """Needed when the deployed artifact is not the traced module.
 

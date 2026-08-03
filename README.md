@@ -295,6 +295,33 @@ experiments/results/f1_vs_size.html
 Generated caches, checkpoints, metrics, plots, and benchmark outputs are ignored
 by Git.
 
+## Peak Activation Memory
+
+`reports/model_stats.json` carries `peak_activation_bytes_fp32`,
+`peak_activation_kib_fp32`, and `peak_activation_kib_int8_est` alongside the
+parameter, size, and MAC fields. This is the "ping-pong buffer" a device must
+reserve for activations regardless of how small the weights are: every layer
+needs its input tensor held in memory while its output is being computed, so
+the peak is the largest input-plus-output size across every traced layer, not
+a sum over the whole network. `peak_activation_kib_int8_est` is a naive
+same-shapes-in-int8 projection (÷4), not an independently traced int8 model —
+it assumes every activation tensor shrinks uniformly and ignores that some
+layer types have no int8 kernel and would not actually shrink under
+quantization.
+
+Read this alongside `gflops`/`macs` rather than in isolation: both are traced
+on the same forward pass, so for a context model (`edge_window_tcn`,
+`edge_window_gru`, `causal_context_transformer_cnn`) both reflect the
+*naive re-encode-every-window* input shape, not a streaming deployment that
+encodes one new window per hop and reuses cached embeddings for the rest. See
+[DEPLOYMENT_HARDWARE.md](DEPLOYMENT_HARDWARE.md) for the streaming-vs-naive
+comparison and why, for this project's actual target part, the difference is
+not academic — the naive float32 path can exceed the chip's total RAM at long
+context lengths, while the streaming design does not.
+
+`benchmark_summary.csv` surfaces `peak_activation_kib_fp32` and
+`peak_activation_kib_int8_est` alongside the other per-run efficiency columns.
+
 ## Energy Estimates
 
 `reports/model_stats.json` carries an `energy` block alongside the parameter,

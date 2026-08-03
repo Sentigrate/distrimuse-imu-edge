@@ -68,6 +68,91 @@ def _int8_mac_fraction(summary_result: Any) -> float:
     return int8 / total
 
 
+def _shape_elements(shape: Any) -> int | None:
+    """Count elements in a torchinfo ``input_size``/``output_size`` value.
+
+    The value is usually a flat list of dimensions for one tensor. For a layer
+    with several tensor inputs (or outputs) torchinfo nests a list of such
+    shapes instead, so this recurses one level and sums the parts. Returns
+    ``None`` for anything unreadable — an empty shape, or a negative dimension,
+    which torchinfo emits for a few recursive/repeated-layer cases — so a
+    layer that cannot be sized is skipped rather than silently mis-sized.
+    """
+    if not shape:
+        return None
+    if isinstance(shape[0], (list, tuple)):
+        total = 0
+        for sub in shape:
+            sub_elems = _shape_elements(sub)
+            if sub_elems is None:
+                return None
+            total += sub_elems
+        return total
+    if any(not isinstance(d, int) or d < 0 for d in shape):
+        return None
+    total = 1
+    for d in shape:
+        total *= d
+    return total
+
+
+def _peak_activation_bytes(summary_result: Any) -> int | None:
+    """Peak "ping-pong buffer" size across the traced forward pass, in bytes.
+
+    Every layer needs its input and output activation tensors held in memory
+    simultaneously — the input while the output is being computed. The peak
+    activation memory is the largest such input-plus-output size across every
+    layer in the network, following the definition used throughout embedded-ML
+    literature (e.g. Saha et al., "Machine Learning for Microcontroller-Class
+    Hardware") and matching the reference thesis this project's deployment
+    hardware is documented against (see ``DEPLOYMENT_HARDWARE.md``).
+
+    Two things this figure does **not** capture, both of which can only push
+    the true peak higher, never lower:
+
+    - **Residual branches.** A block computing ``main(x) + shortcut(x)`` needs
+      ``shortcut(x)`` held in memory for the full duration of ``main(x)``'s
+      layers, not just for one layer's input-output pair. The elementwise add
+      itself is a tensor operation, not an ``nn.Module``, so it has no entry in
+      the trace this walks. A real memory planner (TVM's USMP, TFLite Micro's
+      arena allocator) performs full liveness analysis across the graph; this
+      function does the same single-layer maximum the reference thesis reports
+      (Table 4.1), not that.
+    - **Batching from the encode-windows reshape.** Context models
+      (`edge_window_tcn`, `edge_window_gru`, `causal_context_transformer_cnn`)
+      flatten `(B, N, T, C)` into an `(B*N, T, C)` batch to run one shared
+      encoder over every window at once. Tracing that shape — which this
+      function does, for consistency with the `macs`/`gflops` fields computed
+      from the same forward pass — sizes the encoder's ping-pong buffers for
+      *all* `N` windows going through at once. A streaming firmware
+      implementation that encodes one new window per hop and reuses cached
+      embeddings for the rest (see `DEPLOYMENT_HARDWARE.md`) would see a
+      peak roughly `N` times smaller for the encoder layers.
+
+    Returns ``None`` if ``summary_result`` carries no readable per-layer shape
+    data, so an untraceable model reports an absent figure rather than a wrong
+    one.
+    """
+    try:
+        leaves = [
+            layer
+            for layer in summary_result.summary_list
+            if getattr(layer, "is_leaf_layer", False)
+        ]
+    except AttributeError:
+        return None
+    peak = 0
+    for layer in leaves:
+        in_elems = _shape_elements(layer.input_size)
+        out_elems = _shape_elements(layer.output_size)
+        if in_elems is None or out_elems is None:
+            continue
+        size = (in_elems + out_elems) * 4  # traced module is always float32
+        if size > peak:
+            peak = size
+    return peak or None
+
+
 def _serialized_size_mb(model: nn.Module) -> float:
     """Return the size of the model's weights in megabytes.
 
@@ -160,6 +245,19 @@ def compute_model_stats(
         early-fusion project. The ``flops`` field stores the strict value
         (``2 * macs``) if needed.
 
+    **Peak activation memory (KiB)**
+        The largest per-layer "input + output" activation size across the
+        traced forward pass — the ping-pong buffer a device must reserve
+        regardless of how small the weights are. See
+        ``_peak_activation_bytes`` for the definition and its two documented
+        blind spots (residual branches, and the encode-windows batching that
+        context models use). Reported for the traced float32 module
+        (``peak_activation_kib_fp32``) alongside a naive same-shapes-in-int8
+        projection (``peak_activation_kib_int8_est``) that assumes every
+        activation tensor is stored 4x smaller and ignores that some layer
+        types (e.g. ``LayerNorm``) have no int8 kernel and would not actually
+        shrink under quantization.
+
     **CPU latency**
         Wall-clock timing of a single forward pass on CPU. See
         ``_cpu_latency_ms``. Note that this is timed on whatever machine ran
@@ -211,16 +309,24 @@ def compute_model_stats(
 
     macs: int | None = None
     measured_int8_fraction = 0.0
+    peak_activation_bytes: int | None = None
     try:
         from torchinfo import summary as ti_summary
 
         result = ti_summary(model_cpu, input_data=sample, verbose=0)
         macs = int(result.total_mult_adds)
         measured_int8_fraction = _int8_mac_fraction(result)
+        peak_activation_bytes = _peak_activation_bytes(result)
     except Exception:
         pass
     effective_int8_fraction = (
         measured_int8_fraction if int8_mac_fraction is None else float(int8_mac_fraction)
+    )
+    peak_activation_kib_fp32 = (
+        None if peak_activation_bytes is None else round(peak_activation_bytes / 1024, 3)
+    )
+    peak_activation_kib_int8_est = (
+        None if peak_activation_kib_fp32 is None else round(peak_activation_kib_fp32 / 4, 3)
     )
 
     stats: dict[str, Any] = {
@@ -231,6 +337,9 @@ def compute_model_stats(
         "flops": None if macs is None else int(2 * macs),
         "gmacs": None if macs is None else round(macs / 1e9, 6),
         "gflops": None if macs is None else round(macs / 1e9, 6),
+        "peak_activation_bytes_fp32": peak_activation_bytes,
+        "peak_activation_kib_fp32": peak_activation_kib_fp32,
+        "peak_activation_kib_int8_est": peak_activation_kib_int8_est,
         "context_len": int(context_len),
         "future_context_len": int(future_context_len),
         "total_context_len": int(total_context_len),
