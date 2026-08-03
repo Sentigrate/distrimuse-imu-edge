@@ -81,5 +81,5 @@ def test_one_epoch_training_writes_report_contract(tmp_path) -> None:
     # default-profile fallback for callers that predate energy reporting.
     stats = json.loads((out / "reports" / "model_stats.json").read_text(encoding="utf-8"))
     assert stats["energy"]["energy_per_inference_mj"] > 0
-    assert stats["energy"]["assumptions"]["name"] == "nrf52840_m4f_64mhz"
+    assert stats["energy"]["assumptions"]["name"] == "nrf54l15_m33_128mhz"
     assert stats["energy"]["hop_size_s"] == data_cfg.hop_size_s

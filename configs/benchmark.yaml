@@ -35,17 +35,18 @@ train:
     alpha: 0.5
 
 # Hardware assumption for the analytic energy estimate in model_stats.json.
-# Available profiles: nrf52840_m4f_64mhz, stm32l4_m4f_80mhz,
-# stm32u5_m33_160mhz, ethos_u55_64_200mhz. Any numeric field may be overridden
-# alongside `profile` once you have measured your own board, e.g.:
+# `nrf54l15_m33_128mhz` is the actual deployment target (see
+# DEPLOYMENT_HARDWARE.md); stm32l4_m4f_80mhz, stm32u5_m33_160mhz, and
+# ethos_u55_64_200mhz are kept as contrast cases. Any numeric field may be
+# overridden alongside `profile` once you have measured your own board, e.g.:
 #   energy:
-#     profile: nrf52840_m4f_64mhz
-#     p_active_mw: 17.5
+#     profile: nrf54l15_m33_128mhz
+#     p_active_mw: 9.4
 # The estimate is proportional to MACs and covers compute only — it excludes
 # sensor sampling and radio power, so it ranks models exactly as gmacs does and
 # is not a device-level battery projection. See evaluation/energy.py.
 energy:
-  profile: nrf52840_m4f_64mhz
+  profile: nrf54l15_m33_128mhz
 
 benchmark:
   models:

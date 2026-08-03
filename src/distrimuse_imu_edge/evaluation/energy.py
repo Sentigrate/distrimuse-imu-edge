@@ -46,11 +46,13 @@ that measurement.
 
 Profile values
 --------------
-The bundled profiles are documented order-of-magnitude figures derived from
-typical datasheet run/sleep currents for each part class, not measurements on
-a specific board. Each profile records its reasoning in ``notes``. Treat them
-as starting points and override them in the config once you have measured your
-own hardware.
+The default profile, ``nrf54l15_m33_128mhz``, describes this project's actual
+deployment target and its figures are derived from that part's datasheet; see
+``DEPLOYMENT_HARDWARE.md``. The remaining profiles are contrast cases and their
+figures are order-of-magnitude values typical of a part *class* rather than a
+specific board. Either way these are datasheet arithmetic, not measurements:
+each profile records its reasoning in ``notes``, and every field can be
+overridden in the config once you have measured your own hardware.
 """
 
 from __future__ import annotations
@@ -118,20 +120,32 @@ class EnergyProfile:
 
 
 ENERGY_PROFILES: dict[str, EnergyProfile] = {
-    "nrf52840_m4f_64mhz": EnergyProfile(
-        name="nrf52840_m4f_64mhz",
-        f_clock_hz=64e6,
+    "nrf54l15_m33_128mhz": EnergyProfile(
+        name="nrf54l15_m33_128mhz",
+        f_clock_hz=128e6,
         macs_per_cycle_int8=2.0,
         macs_per_cycle_float32=0.5,
-        p_active_mw=20.0,
-        p_sleep_mw=0.01,
+        p_active_mw=7.8,
+        p_sleep_mw=0.009,
         battery_capacity_mah=225.0,
         battery_voltage_v=3.0,
         notes=(
-            "Cortex-M4F at 64 MHz, CPU running from flash: ~6.5 mA at 3.0 V. "
-            "Sleep assumes System ON with RAM retention and an RTC, ~3 uA. "
-            "Battery is a CR2032 coin cell. Order-of-magnitude datasheet-class "
-            "figures, not board measurements."
+            "The deployment target: Nordic nRF54L15, Cortex-M33 at 128 MHz with "
+            "the DSP extension and a single-precision FPU, 1.5 MB RRAM and "
+            "256 KB RAM, no NPU. Active power is derived from the datasheet "
+            "efficiency figures: 503 CoreMark / 193 CoreMark/mA = 2.61 mA, which "
+            "at 3.0 V is 7.8 mW. Sleep is the datasheet worst-case System ON "
+            "figure of 2.9 uA at 3.0 V. int8 throughput assumes CMSIS-NN's "
+            "SMLAD dual-MAC inner loops, which the M33's DSP extension does "
+            "support - unlike the Cortex-R4F this project's reference thesis "
+            "deployed on. There is no Helium/MVE vector unit (that is M55/M85), "
+            "so per-cycle throughput is M4F-class and the gain over an nRF52840 "
+            "is clock rate. Battery is a CR2032 coin cell, kept identical across "
+            "profiles so cross-profile comparisons stay comparable; override it "
+            "once the tag's actual cell is known. Datasheet-derived, not board "
+            "measurements, and compute only: the LSM6DSOX front end (0.55 mA in "
+            "combo high-performance mode) and the BLE radio (3.4 mA RX / 4.8 mA "
+            "TX) are excluded and are frequently the larger terms."
         ),
     ),
     "stm32l4_m4f_80mhz": EnergyProfile(
@@ -183,7 +197,7 @@ ENERGY_PROFILES: dict[str, EnergyProfile] = {
     ),
 }
 
-DEFAULT_PROFILE_NAME = "nrf52840_m4f_64mhz"
+DEFAULT_PROFILE_NAME = "nrf54l15_m33_128mhz"
 
 _NUMERIC_FIELDS = frozenset(
     {

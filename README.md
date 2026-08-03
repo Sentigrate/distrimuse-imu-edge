@@ -302,17 +302,17 @@ size, MAC, and latency fields:
 
 ```json
 "energy": {
-  "energy_per_inference_mj": 18.447176,
-  "avg_power_mw": 18.447952,
-  "est_battery_life_h": 36.589,
-  "est_battery_life_days": 1.525,
-  "active_time_per_inference_ms": 922.358781,
-  "duty_cycle": 0.922359,
+  "energy_per_inference_mj": 3.597199,
+  "avg_power_mw": 3.602049,
+  "est_battery_life_h": 187.393,
+  "est_battery_life_days": 7.808,
+  "active_time_per_inference_ms": 461.179391,
+  "duty_cycle": 0.461179,
   "real_time_feasible": true,
   "hop_size_s": 1.0,
   "numeric_format": "float32",
   "int8_mac_fraction": 0.0,
-  "assumptions": { "name": "nrf52840_m4f_64mhz", "...": "..." }
+  "assumptions": { "name": "nrf54l15_m33_128mhz", "...": "..." }
 }
 ```
 
@@ -344,12 +344,11 @@ is credited rather than the traced float32 source's.
 
 - **It does not rank models differently from `gmacs`.** Every other term is
   constant across models, so energy is exactly proportional to MACs. The value
-  is unit translation — "1.5 days on a coin cell" instead of "0.0295 GMACs" —
+  is unit translation — "7.8 days on a coin cell" instead of "0.0295 GMACs" —
   not a new comparison axis.
 - **It is an assumption, not a measurement.** Profile values are
-  order-of-magnitude datasheet-class figures for a part *class*, not readings
-  from a board. The full profile is echoed into `assumptions` so any reader can
-  audit it.
+  datasheet-derived figures, not readings from a board. The full profile is
+  echoed into `assumptions` so any reader can audit it.
 - **It covers inference only.** Continuous 104 Hz IMU sampling, sensor
   front-end power, and radio traffic are excluded, and on a real wearable those
   terms are often larger. `est_battery_life_h` is not a device-level battery
@@ -366,17 +365,23 @@ For a figure that survives review, measure on the target with a power analyser
 
 ```yaml
 energy:
-  profile: nrf52840_m4f_64mhz
+  profile: nrf54l15_m33_128mhz
 ```
 
-Bundled profiles: `nrf52840_m4f_64mhz` (default), `stm32l4_m4f_80mhz`,
-`stm32u5_m33_160mhz`, `ethos_u55_64_200mhz`. Any numeric field can be
-overridden once you have measured your own hardware:
+`nrf54l15_m33_128mhz` is the default and describes the actual deployment target
+— Nordic nRF54L15, Cortex-M33 at 128 MHz with the DSP extension, paired with an
+ST LSM6DSOX IMU. See [DEPLOYMENT_HARDWARE.md](DEPLOYMENT_HARDWARE.md) for the
+full platform description and the derivation of every number in the profile.
+
+The other bundled profiles — `stm32l4_m4f_80mhz`, `stm32u5_m33_160mhz`,
+`ethos_u55_64_200mhz` — are contrast cases, not deployment candidates; the last
+one exists to show how much of the cost is the absence of an NPU. Any numeric
+field can be overridden once you have measured your own hardware:
 
 ```yaml
 energy:
-  profile: nrf52840_m4f_64mhz
-  p_active_mw: 17.5
+  profile: nrf54l15_m33_128mhz
+  p_active_mw: 9.4
   battery_capacity_mah: 100.0
   battery_voltage_v: 3.7
 ```
@@ -390,6 +395,19 @@ definitions and the reasoning behind each value.
 `benchmark_summary.csv` surfaces `avg_power_mw`, `est_battery_life_h`,
 `duty_cycle`, and `energy_profile`. Runs recorded before energy reporting
 existed aggregate with nulls in those columns.
+
+Runs recorded before the default changed carry `energy_profile:
+nrf52840_m4f_64mhz`, a 64 MHz part that is no longer in the registry. Their
+energy columns are **not comparable** to newer runs — always group by
+`energy_profile` before comparing. Those runs still load, because
+`config.resolved.yaml` stores the complete profile rather than just its name, so
+`resolve_profile` can read a retired profile back.
+
+Refreshing an old run's energy figures does **not** need a retrain — energy is a
+pure function of the stored MAC count and the profile. But it does need
+`model_stats.json` to be rewritten, and `imu-edge-benchmark` only aggregates that
+file rather than recomputing it, so either re-run the train/quantize step or call
+`estimate_energy` directly against the `macs` value already in the report.
 
 ## Configuration Notes
 
@@ -406,7 +424,7 @@ Important defaults in `configs/benchmark.yaml`:
 - `data.n_classes: 9`
 - `train.max_epochs: 30`
 - `train.output_root: experiments/results`
-- `energy.profile: nrf52840_m4f_64mhz`
+- `energy.profile: nrf54l15_m33_128mhz`
 - `benchmark.models: [teacher_causal_cnn, edge_window_gru, edge_window_tcn]`
 
 If you change the data source or windowing parameters and want to rebuild cached

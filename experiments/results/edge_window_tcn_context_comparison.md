@@ -512,19 +512,40 @@ Two observations run against intuition:
 
 File size is the least interesting axis. Because every convolution genuinely
 executes in int8, the analytic energy estimate (see the repository README) drops
-by the full throughput ratio. Under the `nrf52840_m4f_64mhz` profile at one
-inference per second:
+by the full throughput ratio. Under the `nrf54l15_m33_128mhz` profile — the
+deployment target described in [DEPLOYMENT_HARDWARE.md](../../DEPLOYMENT_HARDWARE.md)
+— at one inference per second:
 
 | Context mode | MMACs | Duty cycle, float32 | Duty cycle, int8 | Average power, float32 | Average power, int8 | Coin-cell life, float32 | Coin-cell life, int8 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Current only | 1.02 | 0.032 | 0.008 | 0.65 mW | 0.17 mW | 43.3 days | 165.4 days |
-| Past 7 + current | 8.28 | 0.259 | 0.065 | 5.18 mW | 1.30 mW | 5.4 days | 21.6 days |
-| Past 7 + current + future 7 | 15.52 | 0.485 | 0.121 | 9.71 mW | 2.43 mW | 2.9 days | 11.6 days |
+| Current only | 1.02 | 0.016 | 0.004 | 0.13 mW | 0.04 mW | 210.3 days | 699.8 days |
+| Past 7 + current | 8.28 | 0.129 | 0.032 | 1.02 mW | 0.26 mW | 27.7 days | 107.8 days |
+| Past 7 + current + future 7 | 15.52 | 0.243 | 0.061 | 1.90 mW | 0.48 mW | 14.8 days | 58.4 days |
+
+> **Profile change.** These rows were **recomputed**, not re-measured. The runs
+> above were originally reported under a `nrf52840_m4f_64mhz` profile (64 MHz,
+> 20 mW active), which has since been replaced by the actual target part. Energy
+> is a closed-form function of the MAC count and the profile, so the recomputation
+> is exact and uses the same MMACs column. Everything else in this report —
+> macro-F1, per-class F1, sizes, host latencies — is unchanged.
+>
+> Two things to note when reading the table. The relative ordering and the
+> float32-to-int8 ratio are identical, because both are properties of the model
+> rather than the part. The absolute lifetimes are roughly 5× longer, from twice
+> the clock (half the active time) and 2.6× lower active power.
 
 These are analytic estimates under a declared hardware assumption, not
 measurements, and they cover inference only — sensor sampling and radio are
-excluded. They are proportional to MACs at a fixed precision, so they re-express
-the GFLOPs column in interpretable units rather than adding a new ranking axis.
+excluded. On this platform those excluded terms dominate: the LSM6DSOX alone
+draws 0.55 mA (1.65 mW at 3 V) in combo high-performance mode, which is larger
+than every int8 figure in the table above. Do not read the coin-cell column as a
+device-level battery projection.
+
+The duty cycles here also assume every window is re-encoded on each inference.
+A streaming deployment can cache window embeddings and re-encode only the one new
+window per hop, which collapses all three modes to roughly the current-only cost;
+see the compute budget in
+[DEPLOYMENT_HARDWARE.md](../../DEPLOYMENT_HARDWARE.md).
 
 ### Where the accuracy goes
 

@@ -46,10 +46,10 @@ def test_efficiency_energy_uses_hop_and_profile_from_caller() -> None:
         "latency_repeats": 2,
     }
     slow_hop = compute_model_stats(
-        model, **kwargs, hop_size_s=10.0, energy_profile="nrf52840_m4f_64mhz"
+        model, **kwargs, hop_size_s=10.0, energy_profile="nrf54l15_m33_128mhz"
     )
     fast_hop = compute_model_stats(
-        model, **kwargs, hop_size_s=1.0, energy_profile="nrf52840_m4f_64mhz"
+        model, **kwargs, hop_size_s=1.0, energy_profile="nrf54l15_m33_128mhz"
     )
 
     # Per-inference energy is a model property and must not move with the hop.
@@ -216,7 +216,7 @@ def test_aggregate_surfaces_energy_columns_and_tolerates_absent_energy(tmp_path)
                     "avg_power_mw": 18.45,
                     "est_battery_life_h": 36.59,
                     "duty_cycle": 0.92,
-                    "assumptions": {"name": "nrf52840_m4f_64mhz"},
+                    "assumptions": {"name": "nrf54l15_m33_128mhz"},
                 },
             }
         ),
@@ -242,7 +242,7 @@ def test_aggregate_surfaces_energy_columns_and_tolerates_absent_energy(tmp_path)
     assert energetic["avg_power_mw"] == 18.45
     assert energetic["est_battery_life_h"] == 36.59
     assert energetic["duty_cycle"] == 0.92
-    assert energetic["energy_profile"] == "nrf52840_m4f_64mhz"
+    assert energetic["energy_profile"] == "nrf54l15_m33_128mhz"
     assert pd.isna(old["avg_power_mw"])
     assert pd.isna(old["energy_profile"])
 
