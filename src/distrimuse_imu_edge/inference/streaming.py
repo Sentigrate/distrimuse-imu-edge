@@ -16,9 +16,16 @@ been encoded, its embedding is valid forever and can be cached.
 embeddings. Each call to :meth:`push` encodes only the newest raw window,
 slides it into the buffer, and — once the buffer holds a full context —
 runs the (much cheaper) temporal block over the buffer to produce a
-prediction. A Colab prototype measured this dropping peak activation memory
-for ``edge_window_tcn`` (wm025) from 624 KiB to 39 KiB, ~16x, because the
-encoder dominates peak memory and now only ever sees one window at a time.
+prediction. Measured with ``compute_streaming_model_stats`` (see
+``evaluation/efficiency.py``) against the real width-0.25 checkpoints, this
+drops peak activation memory for ``edge_window_tcn`` from 585 KiB to 39 KiB
+(15.0x) for the past 7 + current + future 7 context mode, and holds at a flat
+39 KiB regardless of context length — 8x lower than the 312 KiB batched
+figure for past 7 + current, and unchanged from the 39 KiB current-only
+figure, since one window through the encoder is the whole cost either way.
+See ``experiments/results/edge_window_tcn_context_comparison.md``'s
+"Streaming, embedding-cached inference" section for the full measured
+comparison, including latency and int8.
 
 This changes only *how* inference is computed, not *what* it computes:
 fed the same stream of raw windows one at a time, :meth:`push` returns the

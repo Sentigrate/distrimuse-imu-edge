@@ -7,7 +7,10 @@ import pytest
 import torch
 
 from distrimuse_imu_edge.evaluation.aggregate import aggregate_results
-from distrimuse_imu_edge.evaluation.efficiency import compute_model_stats
+from distrimuse_imu_edge.evaluation.efficiency import (
+    compute_model_stats,
+    compute_streaming_model_stats,
+)
 from distrimuse_imu_edge.models import build_model
 
 
@@ -191,6 +194,86 @@ def test_compute_model_stats_reports_peak_activation_memory() -> None:
     assert stats["peak_activation_kib_int8_est"] == pytest.approx(
         stats["peak_activation_kib_fp32"] / 4, rel=1e-6
     )
+
+
+def test_streaming_stats_peak_memory_is_far_below_batched() -> None:
+    """The whole point of streaming: memory should drop, not just latency.
+
+    Batched peak memory scales with the number of context windows (the
+    encode-windows reshape puts all of them through the encoder at once);
+    streaming only ever encodes one window at a time, so its peak should stay
+    close to the current-only figure regardless of context length.
+    """
+    model = build_model(
+        "edge_window_tcn",
+        n_classes=9,
+        input_channels=6,
+        width_mult=0.25,
+        current_index=7,
+    )
+    batched = compute_model_stats(
+        model, context_len=8, window_size_s=0.2, n_channels=6, fs=100, latency_repeats=2
+    )
+    streaming = compute_streaming_model_stats(
+        model, total_context_len=8, window_size_s=0.2, n_channels=6, fs=100, latency_repeats=2
+    )
+
+    assert streaming["peak_activation_kib_fp32_streaming"] > 0
+    assert (
+        streaming["peak_activation_kib_fp32_streaming"]
+        < batched["peak_activation_kib_fp32"]
+    )
+    # int8 estimate is a straight 4x, same convention as compute_model_stats.
+    assert streaming["peak_activation_kib_int8_est_streaming"] == pytest.approx(
+        streaming["peak_activation_kib_fp32_streaming"] / 4, rel=1e-6
+    )
+
+
+def test_streaming_stats_peak_memory_does_not_scale_with_context_length() -> None:
+    """Streaming's peak memory is ~constant in N; batched grows with N.
+
+    Uses the real training window size (3 s @ 104 Hz, 312 samples) rather than
+    a tiny debug window: at realistic scale the encoder's activations (39 KiB,
+    see DEPLOYMENT_HARDWARE.md) dwarf the temporal block's (well under 3 KiB
+    even at N=15), so the streaming peak is the encoder's alone and genuinely
+    independent of N. A tiny debug window inverts that ordering and would make
+    this assertion architecture-dependent rather than a real property.
+    """
+    current_only = build_model(
+        "edge_window_tcn", n_classes=9, input_channels=6, width_mult=0.25, current_index=0
+    )
+    past_and_future = build_model(
+        "edge_window_tcn",
+        n_classes=9,
+        input_channels=6,
+        width_mult=0.25,
+        current_index=7,
+        bidirectional=True,
+    )
+    kwargs: dict = {"window_size_s": 3.0, "n_channels": 6, "fs": 104, "latency_repeats": 2}
+    short = compute_streaming_model_stats(current_only, total_context_len=1, **kwargs)
+    long = compute_streaming_model_stats(past_and_future, total_context_len=15, **kwargs)
+
+    # Same encoder architecture (width 0.25) regardless of context length, so
+    # the streaming peak — one window through the encoder — must match
+    # exactly; only the (tiny, shape-only) temporal-block trace differs.
+    assert short["peak_activation_kib_fp32_streaming"] == pytest.approx(
+        long["peak_activation_kib_fp32_streaming"], rel=1e-6
+    )
+
+
+def test_streaming_stats_reports_latency() -> None:
+    model = build_model(
+        "edge_window_tcn", n_classes=9, input_channels=6, width_mult=0.25, current_index=7
+    )
+    # latency_repeats=2 (as elsewhere in this file) makes the nearest-rank p95
+    # index degenerate — with 10 repeats the p95-must-be->=-median relationship
+    # is meaningful to assert.
+    stats = compute_streaming_model_stats(
+        model, total_context_len=8, window_size_s=0.2, n_channels=6, fs=100, latency_repeats=10
+    )
+    assert stats["cpu_latency_median_ms_streaming"] > 0
+    assert stats["cpu_latency_p95_ms_streaming"] >= stats["cpu_latency_median_ms_streaming"]
 
 
 def test_int8_mac_fraction_override_beats_the_traced_value() -> None:

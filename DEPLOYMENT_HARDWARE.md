@@ -196,27 +196,46 @@ comparisons, and the wrong number for a streaming firmware budget, for the same
 reason the naive MACs figures above are the wrong number for firmware: a
 device that encodes one new window per hop and reuses cached embeddings for the
 rest never holds more than *one* window's worth of encoder activations at a
-time, regardless of context length. That hand-derived streaming estimate:
+time, regardless of context length.
 
-| Item | Size |
-|---|---:|
-| Encoder activation ping-pong peak, one window (16×312 in + 16×312 out) | 9.8 KiB |
-| Raw window ring buffer (312 × 6, int16) | 3.7 KiB |
-| Embedding ring buffer (15 × 24, int8) | 360 B |
-| Temporal TCN activation peak (24×15 × 2) | 720 B |
-| **Total** | **≈ 15 KiB** |
+**Streaming is now implemented and measured, not hand-derived.**
+`compute_streaming_model_stats` traces `window_encoder` on one window and
+`temporal` on the full embedding buffer separately and reports the larger of
+the two — the same single-largest-ping-pong-buffer definition as the batched
+figures above, just applied to the streaming call graph:
 
-Both readings agree at context length 1, where there is only one window to
-begin with (9.75 KiB measured int8 vs. 9.8 KiB hand-derived encoder peak) — the
-gap only opens once `N > 1`, and it opens for the batching reason stated above,
-not because the two calculations disagree about the model.
+| Context mode | Peak activation, fp32, naive full-batch (measured) | Peak activation, fp32, streaming (measured) | Peak activation, int8, streaming (naive ÷4 est.) |
+|---|---:|---:|---:|
+| Current only | 39.0 KiB | 39.0 KiB | 9.75 KiB |
+| Past 7 + current | 312.0 KiB | **39.0 KiB** | **9.75 KiB** |
+| Past 7 + current + future 7 | 585.0 KiB | **39.0 KiB** | **9.75 KiB** |
 
-Against 256 KB of total RAM, these two readings tell different stories, which
-is exactly why the distinction matters:
+Streaming's peak is flat at 39.0 KiB regardless of context length — set
+entirely by the encoder's single-window ping-pong buffer, since the temporal
+block's contribution (a few hundred bytes up to ~3 KiB at 15 buffered
+embeddings) never approaches it. This is measured on host, from the real
+checkpoints, the same way the naive figures are; see
+`experiments/results/edge_window_tcn_context_comparison.md`'s "Streaming,
+embedding-cached inference" section for the full comparison (including
+latency) and `scripts/render_streaming_comparison_figures.py` to reproduce it.
 
-- **Streaming, either precision (≈ 15 KiB fp32 / ≈ 4 KiB int8):** nowhere near
-  a constraint, with room to spare for the BLE stack and everything else Zephyr
-  needs resident.
+This retires the hand-derived "≈15 KiB fp32 / ≈4 KiB int8" total that
+previously stood in this section (component-summed across encoder ping-pong,
+a raw-window ring buffer, an embedding ring buffer, and the temporal peak, at
+mixed assumed precisions) — the measured 39.0 KiB fp32 figure above is higher
+because it uses the same fp32 single-buffer-max definition as the naive
+figures for direct comparability, not because the earlier hand estimate was
+wrong about the model. The measured int8 estimate (9.75 KiB) is close to the
+old hand-derived total (~15 KiB) for the same reason the two conventions
+mostly agree at small scale: most of either figure is the encoder's own
+ping-pong buffer.
+
+Against 256 KB of total RAM, streaming versus naive full-batch tell different
+stories, which is exactly why the distinction matters:
+
+- **Streaming, either precision (39.0 KiB fp32 / 9.75 KiB int8, measured, flat
+  across context length):** nowhere near a constraint, with room to spare for
+  the BLE stack and everything else Zephyr needs resident.
 - **Naive full-batch, int8 (up to 146.25 KiB at the widest context):** still
   fits, but now consumes over half the chip's RAM for activations alone before
   the radio stack gets anything.
@@ -331,12 +350,21 @@ Concrete, actionable, and all in this repository rather than in the hardware:
    kernels are memory-bound so wall-clock gain will be smaller than the MAC gain.
    Given that the cached-embedding budget is already ~4.3 ms against a 1 s hop,
    this is an energy optimization, not a feasibility one.
-6. **Streaming inference is not implemented anywhere.** The embedding cache
-   described above is a firmware-side design, and the accuracy equivalence
-   between "re-encode all windows" and "reuse cached embeddings" should be
-   verified numerically before it is relied upon. It should hold exactly, because
-   the encoder is deterministic and position-independent, but int8 requantization
-   of stored embeddings is a plausible source of drift.
+6. ~~Streaming inference is not implemented anywhere.~~ **Done.**
+   `StreamingWindowPredictor` (`inference/streaming.py`) implements the
+   embedding cache described above, and the accuracy equivalence between
+   "re-encode all windows" and "reuse cached embeddings" is verified
+   numerically (`tests/test_streaming_equivalence.py`), not just argued: it
+   holds exactly (up to floating-point reassociation), as expected since the
+   encoder is deterministic and position-independent. Peak activation memory
+   and CPU latency for the streaming path are now measured too — see the RAM
+   working set section above and
+   `experiments/results/edge_window_tcn_context_comparison.md`'s "Streaming,
+   embedding-cached inference" section. Remaining open item: this is a
+   float32 PyTorch implementation only; int8 requantization of stored
+   embeddings (relevant once streaming is combined with a quantized runtime)
+   is a plausible source of drift that has not been measured, since no
+   int8/ONNX streaming implementation exists yet.
 
 ## What still has to be measured
 
@@ -344,7 +372,9 @@ Everything in the estimate columns. In priority order:
 
 1. Latency and cycle count of the exported int8 graph on an nRF54L15 DK, per
    context mode, with and without embedding caching.
-2. Actual RAM high-water mark from the Zephyr build, against the ~15 KiB estimate.
+2. Actual RAM high-water mark from the Zephyr build, against the measured
+   39.0 KiB (fp32) / 9.75 KiB (int8, naive ÷4 estimate) streaming figure —
+   itself a host-CPU trace, not a device measurement.
 3. Board power with a Nordic PPK2 or Otii Arc, split into sensor, inference, and
    BLE terms. The analytic energy model in this repository covers inference only
    and explicitly excludes sampling and radio, which on a wearable are often the

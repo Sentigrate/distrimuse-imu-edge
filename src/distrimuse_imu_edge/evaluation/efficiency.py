@@ -166,6 +166,32 @@ def _serialized_size_mb(model: nn.Module) -> float:
     return round(buf.tell() / 1e6, 4)
 
 
+def _time_repeated_ms(
+    fn: Any, *, warmup: int = 5, repeats: int = 30
+) -> dict[str, float]:
+    """Time repeated calls to ``fn``, in milliseconds, median and p95.
+
+    Shared by ``_cpu_latency_ms`` (one batched forward pass per call) and
+    ``compute_streaming_model_stats`` (one ``StreamingWindowPredictor.push``
+    per call) so both measure latency the same way: a short warmup to absorb
+    one-time JIT/allocation cost, then ``repeats`` timed calls.
+
+    Median is the primary metric — it is robust to occasional OS scheduling
+    jitter. p95 gives a worst-case bound useful for real-time guarantees.
+    """
+    for _ in range(warmup):
+        fn()
+    values: list[float] = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        fn()
+        values.append((time.perf_counter() - start) * 1000.0)
+    return {
+        "median_ms": float(statistics.median(values)),
+        "p95_ms": float(sorted(values)[max(0, int(0.95 * len(values)) - 1)]),
+    }
+
+
 def _cpu_latency_ms(
     model: nn.Module,
     sample_input: torch.Tensor,
@@ -187,22 +213,142 @@ def _cpu_latency_ms(
 
     Returns:
         Dict with ``cpu_latency_median_ms`` and ``cpu_latency_p95_ms``.
-        Median is the primary metric — it is robust to occasional OS scheduling
-        jitter. p95 gives a worst-case bound useful for real-time guarantees.
     """
     model_cpu = model.to("cpu").eval()
     sample = sample_input.to("cpu")
     with torch.no_grad():
-        for _ in range(warmup):
-            model_cpu(sample)
-        values: list[float] = []
-        for _ in range(repeats):
-            start = time.perf_counter()
-            model_cpu(sample)
-            values.append((time.perf_counter() - start) * 1000.0)
+        timing = _time_repeated_ms(lambda: model_cpu(sample), warmup=warmup, repeats=repeats)
     return {
-        "cpu_latency_median_ms": float(statistics.median(values)),
-        "cpu_latency_p95_ms": float(sorted(values)[max(0, int(0.95 * len(values)) - 1)]),
+        "cpu_latency_median_ms": timing["median_ms"],
+        "cpu_latency_p95_ms": timing["p95_ms"],
+    }
+
+
+def _streaming_peak_activation_bytes(
+    model: nn.Module,
+    *,
+    total_context_len: int,
+    window_size_s: float,
+    n_channels: int,
+    fs: int = 104,
+) -> int | None:
+    """Peak activation bytes for the streaming/embedding-cached inference path.
+
+    A streaming deployment (``inference/streaming.py``) never runs the whole
+    ``(B, N, T, C)`` batch through the encoder at once: it encodes exactly one
+    new raw window per hop and reuses cached embeddings for the rest, then
+    runs the (much smaller) temporal block over the full embedding buffer.
+    This traces those two calls *separately* — ``model.window_encoder`` on one
+    window, ``model.temporal`` on the full ``total_context_len``-embedding
+    buffer — and returns the max, mirroring ``_peak_activation_bytes``'s
+    single-layer-maximum definition but over the streaming call graph instead
+    of the batched one.
+
+    Returns ``None`` if neither call produces a readable trace, so an
+    untraceable model reports an absent figure rather than a wrong one.
+    """
+    try:
+        from torchinfo import summary as ti_summary
+    except ImportError:
+        return None
+
+    t = int(round(window_size_s * fs))
+    peaks: list[int] = []
+    try:
+        encoder_input = torch.zeros(1, n_channels, t, dtype=torch.float32)
+        encoder_result = ti_summary(model.window_encoder, input_data=encoder_input, verbose=0)
+        encoder_peak = _peak_activation_bytes(encoder_result)
+        if encoder_peak is not None:
+            peaks.append(encoder_peak)
+
+        with torch.no_grad():
+            embedding_dim = model.window_encoder(encoder_input).shape[-1]
+        temporal_input = torch.zeros(1, embedding_dim, total_context_len, dtype=torch.float32)
+        temporal_result = ti_summary(model.temporal, input_data=temporal_input, verbose=0)
+        temporal_peak = _peak_activation_bytes(temporal_result)
+        if temporal_peak is not None:
+            peaks.append(temporal_peak)
+    except Exception:
+        pass
+    return max(peaks) if peaks else None
+
+
+def compute_streaming_model_stats(
+    model: nn.Module,
+    *,
+    total_context_len: int,
+    window_size_s: float,
+    n_channels: int,
+    fs: int = 104,
+    latency_repeats: int = 30,
+) -> dict[str, Any]:
+    """Efficiency profile for the streaming/embedding-cached inference path.
+
+    Mirrors ``compute_model_stats``, but measures the *incremental* cost of
+    ``StreamingWindowPredictor.push()`` instead of a full batched forward
+    pass: peak activation memory comes from tracing the encoder and temporal
+    block separately (see ``_streaming_peak_activation_bytes``), and CPU
+    latency times repeated ``push()`` calls once the buffer is warmed up —
+    the real per-hop cost, not an estimate. Parameter count, model size, and
+    MACs are unchanged from ``compute_model_stats`` (streaming changes how
+    compute is scheduled across hops, not what the model is), so this
+    function only reports the fields that actually differ. See
+    ``inference/streaming.py`` for what streaming changes and why.
+
+    Args:
+        model: Trained model exposing ``window_encoder``/``temporal`` (i.e.
+            anything built on ``_WindowSequenceMixin``). Will be moved to CPU
+            and set to eval mode.
+        total_context_len: Number of windows the model expects as context
+            (``context_len + future_context_len``), matching the training
+            config and ``StreamingWindowPredictor``'s constructor argument.
+        window_size_s: Duration of each window in seconds.
+        n_channels: Number of input sensor channels.
+        fs: Sampling frequency in Hz (default 104 Hz for this dataset).
+        latency_repeats: Number of timed ``push()`` calls for latency
+            measurement, after the buffer has been warmed up.
+
+    Returns:
+        Dict with ``peak_activation_bytes_fp32_streaming``,
+        ``peak_activation_kib_fp32_streaming``,
+        ``peak_activation_kib_int8_est_streaming`` (naive ÷4 projection, same
+        convention as ``compute_model_stats``), ``cpu_latency_median_ms_streaming``,
+        and ``cpu_latency_p95_ms_streaming``.
+    """
+    from distrimuse_imu_edge.inference.streaming import StreamingWindowPredictor
+
+    model_cpu = model.to("cpu").eval()
+    t = int(round(window_size_s * fs))
+
+    peak_activation_bytes = _streaming_peak_activation_bytes(
+        model_cpu,
+        total_context_len=total_context_len,
+        window_size_s=window_size_s,
+        n_channels=n_channels,
+        fs=fs,
+    )
+    peak_activation_kib_fp32 = (
+        None if peak_activation_bytes is None else round(peak_activation_bytes / 1024, 3)
+    )
+    peak_activation_kib_int8_est = (
+        None if peak_activation_kib_fp32 is None else round(peak_activation_kib_fp32 / 4, 3)
+    )
+
+    predictor = StreamingWindowPredictor(model_cpu, total_context_len=total_context_len)
+    for _ in range(total_context_len - 1):
+        predictor.push(torch.zeros(t, n_channels))
+
+    def _one_push() -> None:
+        predictor.push(torch.zeros(t, n_channels))
+
+    timing = _time_repeated_ms(_one_push, warmup=5, repeats=latency_repeats)
+
+    return {
+        "peak_activation_bytes_fp32_streaming": peak_activation_bytes,
+        "peak_activation_kib_fp32_streaming": peak_activation_kib_fp32,
+        "peak_activation_kib_int8_est_streaming": peak_activation_kib_int8_est,
+        "cpu_latency_median_ms_streaming": timing["median_ms"],
+        "cpu_latency_p95_ms_streaming": timing["p95_ms"],
     }
 
 

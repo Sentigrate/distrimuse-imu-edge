@@ -1,0 +1,47 @@
+[
+  {
+    "label": "Current only",
+    "context_len": 1,
+    "future_context_len": 0,
+    "total_context_len": 1,
+    "test_macro_f1_fp32": 0.5122560002264483,
+    "test_macro_f1_int8": 0.47563113394279033,
+    "peak_kib_fp32_normal": 39.0,
+    "peak_kib_int8_normal_est": 9.75,
+    "peak_kib_fp32_streaming": 39.0,
+    "peak_kib_int8_streaming_est": 9.75,
+    "latency_ms_fp32_normal": 0.215478939935565,
+    "latency_ms_fp32_streaming": 0.21864543668925762,
+    "latency_ms_int8_normal_onnx": 0.0508755911141634
+  },
+  {
+    "label": "Past 7 + current",
+    "context_len": 8,
+    "future_context_len": 0,
+    "total_context_len": 8,
+    "test_macro_f1_fp32": 0.5516516216684534,
+    "test_macro_f1_int8": 0.5281951409237304,
+    "peak_kib_fp32_normal": 312.0,
+    "peak_kib_int8_normal_est": 78.0,
+    "peak_kib_fp32_streaming": 39.0,
+    "peak_kib_int8_streaming_est": 9.75,
+    "latency_ms_fp32_normal": 0.5985414609313011,
+    "latency_ms_fp32_streaming": 0.4461670760065317,
+    "latency_ms_int8_normal_onnx": 0.10960455983877182
+  },
+  {
+    "label": "Past 7 + current\n+ future 7",
+    "context_len": 8,
+    "future_context_len": 7,
+    "total_context_len": 15,
+    "test_macro_f1_fp32": 0.6935259081092684,
+    "test_macro_f1_int8": 0.6929710734505496,
+    "peak_kib_fp32_normal": 585.0,
+    "peak_kib_int8_normal_est": 146.25,
+    "peak_kib_fp32_streaming": 39.0,
+    "peak_kib_int8_streaming_est": 9.75,
+    "latency_ms_fp32_normal": 0.627207919023931,
+    "latency_ms_fp32_streaming": 0.45070797204971313,
+    "latency_ms_int8_normal_onnx": 0.1749579096212983
+  }
+]

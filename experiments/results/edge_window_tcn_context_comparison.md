@@ -610,6 +610,178 @@ answer differs by model:
 - **Current only: QAT is indicated, and this is the worst case.** `−0.0366` on a
   `0.512` baseline is a 7% relative loss.
 
+## Streaming, embedding-cached inference
+
+Every figure so far — GFLOPs, host CPU latency, int8 accuracy, peak memory —
+comes from one inference *shape*: a single batched forward pass over all
+`total_context_len` windows at once, the shape `encode_windows` and
+`compute_model_stats` both trace. A real deployment does not have to compute
+that way, and `inference/streaming.py` implements the alternative.
+
+### Normal inference vs. the streaming/caching approach
+
+**Normal ("re-encode everything").** Every hop, the model receives the full
+`(1, N, T, C)` context — `N` raw windows — and `encode_windows` reshapes it to
+`(N, T, C)` so the shared CNN encoder runs once per window, from scratch,
+every single hop. Consecutive hops share almost all of their context (hop
+`i+1`'s window `0..N-2` are hop `i`'s window `1..N-1`), so most of that
+encoding work is pure repetition of the previous hop's work.
+
+**Streaming (`StreamingWindowPredictor`).** The encoder is deterministic and
+position-independent — a window's embedding never depends on which other
+windows share its context — so once a window has been encoded, its embedding
+is valid forever and can be cached. `StreamingWindowPredictor` keeps a
+fixed-size ring buffer of embeddings (`collections.deque(maxlen=total_context_len)`).
+Each `push()`:
+
+1. Encodes **only the newest raw window** through `window_encoder`.
+2. Slides it into the buffer, evicting the oldest embedding.
+3. Once the buffer is full, runs the temporal TCN over the buffered
+   embeddings — unchanged from the normal path, since the temporal block was
+   never the expensive part — and returns the classifier's logits.
+
+This is a **scheduling change, not a numerical one**. Fed the same stream of
+raw windows one at a time, `push()` returns the same logits (up to
+floating-point reassociation) as a full batched `forward()` over the
+equivalent window range — verified exactly, not just argued, in
+`tests/test_streaming_equivalence.py`. Streaming does not trade accuracy for
+memory: every macro-F1 number in this report applies unchanged to the
+streaming path.
+
+The one thing streaming does **not** remove is look-ahead delay. A
+bidirectional model still has to wait for `future_context_len` windows to
+arrive before it can produce a prediction for a given position
+(`StreamingWindowPredictor.current_index`). Caching only removes *redundant
+re-encoding*; it cannot make the future arrive sooner, so the past 7 +
+current + future 7 model keeps its 7 s decision delay regardless of how it is
+scheduled.
+
+### Confirming the memory reduction: measured, not estimated
+
+`compute_streaming_model_stats` (new alongside `compute_model_stats`) traces
+`window_encoder` on one window and `temporal` on the full embedding buffer
+*separately*, then reports the larger of the two — mirroring
+`compute_model_stats`'s own "largest single layer's ping-pong buffer" peak
+activation definition, just applied to the streaming call graph instead of
+the batched one. Measured on the three real width-0.25 checkpoints:
+
+![Peak activation memory across context modes, normal vs streaming, float32 and int8](edge_window_tcn_context_report_assets/streaming-peak-memory.svg)
+
+| Context mode | Peak activation, float32, normal | Peak activation, float32, streaming | Reduction | Peak activation, int8 (naive ÷4 est.), normal | Peak activation, int8 (naive ÷4 est.), streaming |
+|---|---:|---:|---:|---:|---:|
+| Current only | 39.0 KiB | 39.0 KiB | 1.0× | 9.75 KiB | 9.75 KiB |
+| Past 7 + current | 312.0 KiB | 39.0 KiB | 8.0× | 78.0 KiB | 9.75 KiB |
+| Past 7 + current + future 7 | 585.0 KiB | **39.0 KiB** | **15.0×** | 146.25 KiB | **9.75 KiB** |
+
+This confirms the claim in `inference/streaming.py`'s module docstring, and
+sharpens it: peak activation memory for the streaming path is **the same
+39.0 KiB regardless of context length**, because it is set entirely by
+encoding one window — the temporal block's contribution (a few hundred bytes
+to ~3 KiB depending on buffer length) never comes close to the encoder's
+39 KiB. The normal path's peak memory, by contrast, scales linearly with the
+number of context windows (`39 × 8 = 312`, `39 × 15 = 585`), because the
+encode-windows reshape puts all of them through the shared encoder as one
+batch. The int8 column is the same naive same-shapes-÷4 projection used
+throughout this report and `DEPLOYMENT_HARDWARE.md` — quantization halves
+storage width, not activation tensor shapes, so it applies identically to
+both paths.
+
+The practical consequence, spelled out in `DEPLOYMENT_HARDWARE.md`'s RAM
+budget: against this repository's 256 KB target device, streaming int8 (≈10
+KiB) or streaming float32 (39 KiB) leave the chip's RAM essentially untouched,
+naive-batched int8 at the widest context (146 KiB) consumes over half of it,
+and naive-batched float32 at the widest context (585 KiB) **does not fit at
+all** — more than double the part's total RAM. For the past 7 + current +
+future 7 configuration specifically, streaming is not an optimization; it is
+the difference between fitting on this part and not.
+
+### Effect on latency
+
+Streaming trades batched work for one-window work, so the *compute* argument
+for lower latency is straightforward — the question is whether it shows up on
+real hardware. Measured on this host (median of 30 timed calls, 5-call
+warmup, same convention as the rest of this report):
+
+| Context mode | CPU latency, float32, normal | CPU latency, float32, streaming | CPU latency, int8, normal (ONNX Runtime) |
+|---|---:|---:|---:|
+| Current only | 0.211 ms | 0.214 ms | 0.044 ms |
+| Past 7 + current | 0.466 ms | 0.447 ms | 0.117 ms |
+| Past 7 + current + future 7 | 0.639 ms | **0.441 ms** | 0.181 ms |
+
+Three things worth reading carefully here:
+
+- **Streaming's host-latency benefit is real but modest, and that is expected.**
+  At current-only there is nothing to save (context length 1, so normal and
+  streaming do the same work) and the two are within measurement noise. At
+  past 7 + current + future 7, streaming is `1.45×` faster despite doing
+  roughly `15×` less encoder computation — the same fixed
+  framework/dispatch-overhead effect this report already documented for the
+  normal path ("Latency grows more slowly than FLOPs...", above) applies
+  again here: a `deque` append, `torch.stack`, and a transpose all cost a
+  fixed amount regardless of how much encoder work they replaced.
+- **The int8 numbers here are measured, not estimated** — an actual
+  `onnxruntime.InferenceSession` running the already-exported
+  `onnx/model_int8.onnx` artifacts, timed the same way as everything else.
+  They are `2.4×`–`4.7×` faster than float32 on this host, consistent with
+  int8 kernels genuinely running rather than a compression label being taken
+  on faith (see the int8 MAC-fraction discussion above).
+- **There is no int8-streaming row.** `StreamingWindowPredictor` only wraps
+  the float32 PyTorch path; an ONNX or int8 streaming implementation does not
+  exist yet, so that cell is reported as unmeasured here rather than
+  projected. `DEPLOYMENT_HARDWARE.md`'s analytic duty-cycle table already
+  estimates what int8 *and* cached embeddings together would cost on the
+  actual `nRF54L15` deployment target (`4.27`–`4.55 ms` per inference across
+  all three context modes) — but that is a MAC-count-based estimate for a
+  specific microcontroller profile, not a host measurement, and the two
+  should not be blended. Host CPU numbers above are useful for comparing
+  these models to each other; they say nothing about the deployment target,
+  exactly as this report's earlier latency section already cautions.
+
+### F1 vs peak memory, across every combination measured
+
+Putting accuracy and memory on the same axes for all three context modes and
+three realistic deployment configurations — float32 normal, int8 normal, and
+int8 streaming (F1 is identical between int8 normal and int8 streaming, since
+streaming only changes *how* the int8-equivalent computation is scheduled,
+never *what* it computes):
+
+![Test macro-F1 versus peak activation memory for float32-normal, int8-normal, and int8-streaming, across all three context modes](edge_window_tcn_context_report_assets/streaming-f1-vs-memory.svg)
+
+| Context mode | Configuration | Peak activation memory | Test macro-F1 |
+|---|---|---:|---:|
+| Current only | float32, normal | 39.00 KiB | 0.5123 |
+| Current only | int8, normal | 9.75 KiB | 0.4756 |
+| Current only | int8, streaming | **9.75 KiB** | 0.4756 |
+| Past 7 + current | float32, normal | 312.00 KiB | 0.5517 |
+| Past 7 + current | int8, normal | 78.00 KiB | 0.5282 |
+| Past 7 + current | int8, streaming | **9.75 KiB** | 0.5282 |
+| Past 7 + current + future 7 | float32, normal | 585.00 KiB | 0.6935 |
+| Past 7 + current + future 7 | int8, normal | 146.25 KiB | 0.6930 |
+| Past 7 + current + future 7 | int8, streaming | **9.75 KiB** | **0.6930** |
+
+The bottom-right cell is the headline: **past 7 + current + future 7, int8,
+streaming reaches the highest macro-F1 measured anywhere in this report
+(`0.6930`, statistically indistinguishable from its own float32 number) at
+the smallest peak memory measured anywhere in this report (`9.75 KiB`, tied
+with current-only).** Streaming turns "more context" from a memory cost into
+a free lunch: because the encoder never sees more than one window regardless
+of `N`, the model that benefits most from temporal context (`+0.181` macro-F1
+over current-only) is also the one for which caching wins the most (`15.0×`
+memory, `1.45×` measured host latency, and per `DEPLOYMENT_HARDWARE.md`,
+comparable or better MAC-based energy per inference on the actual deployment
+target). Everywhere in this report so far, more context meant paying more
+memory or more compute for accuracy; streaming is what breaks that trade-off.
+
+Reproduce this section's figures and underlying numbers with:
+
+```bash
+uv run python scripts/render_streaming_comparison_figures.py
+```
+
+This writes `streaming_comparison.json` (the measured numbers this section's
+tables and figures are built from) plus the two SVGs, under
+`edge_window_tcn_context_report_assets/`.
+
 ## Training behavior and checkpoint selection
 
 ![Validation macro-F1 for the width-0.25 runs](edge_window_tcn_context_report_assets/validation-training-curves.svg)
