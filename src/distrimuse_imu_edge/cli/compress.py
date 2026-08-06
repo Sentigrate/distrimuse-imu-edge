@@ -16,7 +16,12 @@ from distrimuse_imu_edge.data.config import DataConfig
 from distrimuse_imu_edge.compression.pruning import apply_structured_pruning
 from distrimuse_imu_edge.data.datamodule import IMUEdgeDataModule
 from distrimuse_imu_edge.evaluation.efficiency import compute_model_stats
-from distrimuse_imu_edge.evaluation.metrics import classification_report_payload, collect_predictions, predictions_frame
+from distrimuse_imu_edge.evaluation.metrics import (
+    classification_report_payload,
+    collect_predictions,
+    event_classification_report_payload,
+    predictions_frame,
+)
 from distrimuse_imu_edge.evaluation.reports import write_run_reports
 from distrimuse_imu_edge.training.runner import load_checkpoint_model, resolve_device, train_model
 
@@ -219,6 +224,15 @@ def main() -> None:
         },
         output_dir / "checkpoints" / "best.ckpt",
     )
+    for split in ("val", "test"):
+        metrics.update(
+            event_classification_report_payload(
+                predictions,
+                n_classes=data_cfg.n_classes,
+                prefix=split,
+            )
+        )
+
     write_run_reports(
         output_dir=output_dir,
         metrics=metrics,

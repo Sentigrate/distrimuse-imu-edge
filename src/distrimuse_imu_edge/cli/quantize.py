@@ -37,6 +37,7 @@ from distrimuse_imu_edge.data.datamodule import IMUEdgeDataModule
 from distrimuse_imu_edge.evaluation.efficiency import compute_model_stats
 from distrimuse_imu_edge.evaluation.metrics import (
     classification_report_payload,
+    event_classification_report_payload,
     collect_predictions,
     predictions_frame,
 )
@@ -258,6 +259,16 @@ def quantize_checkpoint(
     )
     resolved["data"] = data_cfg.to_dict()
     resolved["compression"] = compression
+
+    for split in ("val", "test"):
+        metrics.update(
+            event_classification_report_payload(
+                predictions,
+                n_classes=data_cfg.n_classes,
+                prefix=split,
+            )
+        )
+
     write_run_reports(
         output_dir=output_dir,
         metrics=metrics,
