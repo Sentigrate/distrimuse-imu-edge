@@ -310,24 +310,9 @@ def _rows() -> tuple[list[Stage], dict[str, int | float]]:
 
 
 def _render(rows: list[Stage], totals: dict[str, int | float]) -> None:
-    fig, ax = plt.subplots(figsize=(17.2, 10.4))
+    """Render only the table; caption and interpretation live in the paper."""
+    fig, ax = plt.subplots(figsize=(17.2, 6.9))
     ax.axis("off")
-    fig.suptitle(
-        "Edge Window TCN (15 windows): per-stage activation and compute profile",
-        x=0.04,
-        y=0.98,
-        ha="left",
-        fontsize=18,
-        fontweight="bold",
-        color=INK,
-    )
-    fig.text(
-        0.04,
-        0.946,
-        "FP32 published ONNX graphs · one 1 s hop · normal inference versus embedding-cached streaming",
-        fontsize=10.5,
-        color=MUTED,
-    )
     headers = [
         "Layer / stage",
         "Output shape\nnormal",
@@ -385,7 +370,7 @@ def _render(rows: list[Stage], totals: dict[str, int | float]) -> None:
         cellLoc="center",
         colLoc="center",
         colWidths=[0.31, 0.112, 0.112, 0.112, 0.112, 0.095, 0.095, 0.075],
-        bbox=[0.02, 0.15, 0.96, 0.75],
+        bbox=[0.01, 0.02, 0.98, 0.96],
     )
     table.auto_set_font_size(False)
     table.set_fontsize(8.0)
@@ -403,24 +388,6 @@ def _render(rows: list[Stage], totals: dict[str, int | float]) -> None:
         if row == len(values):
             cell.set_text_props(weight="bold")
 
-    fig.text(
-        0.04,
-        0.095,
-        "How to read this: normal inference encodes all 15 overlapping raw windows at every hop; cached inference encodes only the arriving window. "
-        "The CNN’s second convolution is therefore the normal-schedule bottleneck (585.00 KiB), while the cached schedule peaks at 39.00 KiB in that convolution plus a 1.41 KiB resident embedding buffer (40.41 KiB total).",
-        fontsize=9.2,
-        color=INK,
-        wrap=True,
-    )
-    fig.text(
-        0.04,
-        0.045,
-        "Activation memory is the real ONNX Runtime activation input plus output for the displayed node; weights, quantization constants, and allocator reservations are excluded. "
-        "FLOPs use 2 × MACs. *Parameters are shared by normal and cached execution; †includes the resident [15, 24] float32 embedding ring buffer.",
-        fontsize=8.7,
-        color=MUTED,
-        wrap=True,
-    )
     fig.savefig(OUTPUT.with_suffix(".svg"), bbox_inches="tight")
     fig.savefig(OUTPUT.with_suffix(".png"), dpi=220, bbox_inches="tight")
     plt.close(fig)
