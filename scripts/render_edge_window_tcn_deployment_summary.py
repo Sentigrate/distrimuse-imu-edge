@@ -162,15 +162,6 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
     ax.set_title("A. CPU latency", loc="left", weight="bold", fontsize=11)
     ax.set_xlabel("Median inference latency (ms, log scale)")
     ax.set_ylabel("Test macro-F1")
-    ax.text(
-        0.02,
-        0.02,
-        "All timings: 20 warm-ups + 100 calls\non one held-out test input.",
-        transform=ax.transAxes,
-        fontsize=7.7,
-        color=MUTED,
-        va="bottom",
-    )
     soften_axes(ax)
 
     # B — activation memory.  The highlighted point is the recommended deployment configuration.
@@ -208,15 +199,6 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
     ax.set_title("B. Peak activation memory", loc="left", weight="bold", fontsize=11)
     ax.set_xlabel("Peak activation memory (KiB, log scale)")
     ax.set_ylabel("Test macro-F1")
-    ax.text(
-        0.02,
-        0.02,
-        "Actual ONNX Runtime-profiled graph activations\nplus the resident embedding ring buffer.",
-        transform=ax.transAxes,
-        fontsize=7.7,
-        color=MUTED,
-        va="bottom",
-    )
     soften_axes(ax)
 
     # C — artifact storage. Split graphs are stored separately for caching.
@@ -233,15 +215,6 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
     ax.set_title("C. Exported ONNX size", loc="left", weight="bold", fontsize=11)
     ax.set_xlabel("Exported ONNX artifact size (KiB)")
     ax.set_ylabel("Test macro-F1")
-    ax.text(
-        0.02,
-        0.02,
-        "Cached deployment stores a split encoder + temporal graph pair\n(the table in the mini-paper reports both exact sizes).",
-        transform=ax.transAxes,
-        fontsize=7.7,
-        color=MUTED,
-        va="bottom",
-    )
     soften_axes(ax)
 
     for ax in axes:

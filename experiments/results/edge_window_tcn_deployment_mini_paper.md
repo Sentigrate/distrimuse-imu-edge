@@ -64,7 +64,10 @@ and up-triangles are cached static-int8. Every point is measured from the
 published shared ONNX artifacts. Cached points use only real, non-padded
 contexts; normal points include the configuration's zero-padded boundaries.
 Panel B includes the resident float32 embedding ring buffer as well as actual
-ONNX Runtime-profiled node input/output activations.
+ONNX Runtime-profiled node input/output activations. Latencies use 20 warm-up
+calls and 100 timed calls on one held-out test input. Cached deployment stores
+a split encoder and temporal graph pair; the table reports the exact combined
+and split artifact sizes.
 
 | Context | Precision / scheduling | Test macro-F1 | Median host ONNX Runtime latency | Peak activation + cache | ONNX artifact size |
 |---|---|---:|---:|---:|---:|
