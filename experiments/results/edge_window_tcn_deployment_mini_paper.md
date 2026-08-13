@@ -103,7 +103,11 @@ the middle/current window `t`. In naive inference, every 1 s hop re-runs the
 CNN on all 15 windows. In streaming inference, the encoder processes only the
 newly arrived raw window. Its 24-D output is appended to a fixed-size buffer,
 the oldest embedding is discarded, and the unchanged TCN runs over that
-15-embedding buffer to classify the middle token.
+15-embedding buffer to classify the middle token. The right panel reports the
+measured 15-window working set: float32 falls from 590.06 to 45.47 KiB and
+int8 from 146.40 to 11.31 KiB when caching is enabled (normal versus cached).
+The values include ONNX Runtime-profiled activations and the resident embedding
+ring buffer; each bar is labelled directly to keep the chart uncluttered.
 
 This works because the CNN encoder is shared across window positions and
 contains no cross-window operation: a window’s embedding depends only on that

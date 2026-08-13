@@ -292,9 +292,18 @@ def cache_explainer(rows: list[dict], path: Path) -> None:
 
     ax.text(0.0, 4.84, "Embedding-cached streaming", fontsize=9.6, weight="bold", color=INK)
     ax.text(0.0, 4.36, "At the next hop: encode only the arriving future window", fontsize=8.2, color=MUTED)
-    label_box(ax, x0 + 14 * (box_w + gap), 3.22, box_w, 0.72, "CNN", face=FUTURE + "2e", edge=FUTURE, fontsize=7.2)
-    ax.text(x0 + 14 * (box_w + gap) + box_w / 2, 2.96, "new", ha="center", va="top", fontsize=7.3, color=FUTURE, weight="bold")
-    ax.add_patch(FancyArrowPatch((15.15, 3.58), (14.2, 3.58), arrowstyle="-|>", mutation_scale=11, color=INK, lw=1.1))
+    new_x = x0 + 14 * (box_w + gap)
+    label_box(ax, new_x, 3.25, box_w, 0.72, "new\nCNN", face=FUTURE + "2e", edge=FUTURE, fontsize=7.0)
+    ax.add_patch(
+        FancyArrowPatch(
+            (new_x + box_w / 2, 3.22),
+            (new_x + box_w / 2, 2.65),
+            arrowstyle="-|>",
+            mutation_scale=11,
+            color=INK,
+            lw=1.1,
+        )
+    )
     for index, colour in enumerate(colours):
         x = x0 + index * (box_w + gap)
         ax.add_patch(plt.Rectangle((x, 1.92), box_w, 0.68, facecolor=colour + "55", edgecolor=colour, linewidth=0.9))
@@ -305,14 +314,14 @@ def cache_explainer(rows: list[dict], path: Path) -> None:
     ax.text(0.0, 0.62, f"1 encoder pass per hop  ·  {future['memory_fp32_cached']:.1f} KiB measured peak  ·  same valid-stream classes", fontsize=8.5, color=INK, weight="bold")
 
     ax = mosaic["memory"]
-    ax.set_title("B. Why caching makes the future model fit", loc="left", weight="bold", fontsize=12, pad=8)
+    ax.set_title("B. Measured working set: normal versus cached", loc="left", weight="bold", fontsize=12, pad=8)
     categories = ["float32", "int8"]
     normal = [future["memory_fp32_normal"], future["memory_int8_normal"]]
     cached = [future["memory_fp32_cached"], future["memory_int8_cached"]]
     x = [0, 1]
     width = 0.31
-    normal_bars = ax.bar([v - width / 2 for v in x], normal, width, color="#aab7c2", label="normal: re-encode all windows")
-    cached_bars = ax.bar([v + width / 2 for v in x], cached, width, color=future["colour"], label="cached embeddings")
+    normal_bars = ax.bar([v - width / 2 for v in x], normal, width, color="#aab7c2")
+    cached_bars = ax.bar([v + width / 2 for v in x], cached, width, color=future["colour"])
     ax.set_yscale("log")
     ax.set_xticks(x, categories)
     ax.set_ylabel("Peak activation memory (KiB, log scale)")
@@ -322,29 +331,16 @@ def cache_explainer(rows: list[dict], path: Path) -> None:
     ax.spines[["left", "bottom"]].set_color(GRID)
     for bars, values in ((normal_bars, normal), (cached_bars, cached)):
         for bar, value in zip(bars, values):
-            ax.annotate(f"{value:g}", (bar.get_x() + bar.get_width() / 2, value), xytext=(0, 5), textcoords="offset points", ha="center", fontsize=8.5, weight="bold")
-    ax.text(
-        0.5,
-        0.79,
-        "≈13× lower peak\nmemory for the\n15-window model",
-        transform=ax.transAxes,
-        ha="center",
-        va="center",
-        fontsize=10.2,
-        weight="bold",
-        color=INK,
-    )
-    ax.text(
-        0.5,
-        0.48,
-        "Same class predictions on\nthe valid stream; boundary\nwindows are not zero-padded.",
-        transform=ax.transAxes,
-        ha="center",
-        va="center",
-        fontsize=8.4,
-        color=MUTED,
-    )
-    ax.legend(frameon=False, fontsize=7.7, loc="lower left")
+            schedule = "normal" if bars is normal_bars else "cached"
+            ax.annotate(
+                f"{value:.1f}\n{schedule}",
+                (bar.get_x() + bar.get_width() / 2, value),
+                xytext=(0, 5),
+                textcoords="offset points",
+                ha="center",
+                fontsize=8.2,
+                weight="bold",
+            )
     fig.suptitle("Caching embeddings removes repeated CNN work — not the 7 s look-ahead", fontsize=16, weight="bold", x=0.04, ha="left")
     fig.savefig(path, bbox_inches="tight")
     fig.savefig(path.with_suffix(".png"), dpi=220, bbox_inches="tight")
