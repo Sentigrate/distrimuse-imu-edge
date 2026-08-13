@@ -40,7 +40,6 @@ INK = "#15222d"
 MUTED = "#5c6974"
 GRID = "#cbd5dc"
 SURFACE = "#ffffff"
-HIGHLIGHT = "#f4b942"
 PAST = "#3c9d9b"
 CURRENT = "#f28e2b"
 FUTURE = "#8e6bbe"
@@ -127,93 +126,77 @@ def add_context_labels(ax: plt.Axes, rows: list[dict], x_key: str, y_key: str, *
         ax.set_xscale("log")
 
 
-def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
-    """Reference-style three-panel F1 vs deployment-cost overview."""
-    # One wide panel per row is deliberately presentation-friendly: labels,
-    # annotations, and the three deployment forms remain readable on a slide.
-    fig, axes = plt.subplots(3, 1, figsize=(9.8, 14.5))
+def transition_arrow(
+    ax: plt.Axes,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    *,
+    colour: str,
+    linestyle: str,
+) -> None:
+    """Show a deployment transition while leaving both endpoints visible."""
+    ax.add_patch(
+        FancyArrowPatch(
+            start,
+            end,
+            arrowstyle="-|>",
+            mutation_scale=11,
+            color=colour,
+            linestyle=linestyle,
+            linewidth=1.4,
+            alpha=0.72,
+            zorder=2,
+        )
+    )
+
+
+def deployment_tradeoff_figure(
+    rows: list[dict],
+    *,
+    panel_label: str,
+    title: str,
+    x_normal_fp32: str,
+    x_normal_int8: str,
+    x_cached_int8: str,
+    xlabel: str,
+    log_x: bool,
+    path: Path,
+) -> None:
+    """Render one slide-ready float32 → int8 → cached-int8 comparison."""
+    fig, ax = plt.subplots(figsize=(10.2, 6.3))
     fig.suptitle(
-        "Edge Window TCN (width 0.25): accuracy versus deployment cost",
+        f"Edge Window TCN (width 0.25): macro-F1 versus {title.lower()}",
         fontsize=16,
         weight="bold",
-        x=0.055,
-        y=0.992,
+        x=0.08,
+        y=0.97,
         ha="left",
     )
     fig.text(
-        0.055,
-        0.967,
-        "Held-out configured test split × float32 / static int8. Triangles show measured embedding-cached ONNX Runtime execution.",
+        0.08,
+        0.925,
+        "Held-out configured test split. Follow each colour: float32 normal → int8 normal → int8 cached embeddings.",
         color=MUTED,
         fontsize=9.3,
     )
-
-    # A — latency. The presentation comparison keeps the three primary forms.
-    ax = axes[0]
     for row in rows:
-        c = row["colour"]
-        ax.plot([row["latency_int8_normal"], row["latency_int8_cached"]], [row["f1_int8"], row["f1_int8_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
-        dot(ax, row["latency_fp32_normal"], row["f1_fp32"], colour=c, marker="o")
-        dot(ax, row["latency_int8_normal"], row["f1_int8"], colour=c, marker="s")
-        dot(ax, row["latency_int8_cached"], row["f1_int8_cached"], colour=c, marker="^")
-    add_context_labels(ax, rows, "latency_fp32_normal", "f1_fp32", log_x=True)
-    ax.set_title("A. CPU latency", loc="left", weight="bold", fontsize=11)
-    ax.set_xlabel("Median inference latency (ms, log scale)")
-    ax.set_ylabel("Test macro-F1")
-    soften_axes(ax)
+        colour = row["colour"]
+        fp32 = (row[x_normal_fp32], row["f1_fp32"])
+        int8 = (row[x_normal_int8], row["f1_int8"])
+        cached = (row[x_cached_int8], row["f1_int8_cached"])
+        transition_arrow(ax, fp32, int8, colour=colour, linestyle="-")
+        transition_arrow(ax, int8, cached, colour=colour, linestyle=(0, (2, 2)))
+        dot(ax, *fp32, colour=colour, marker="o")
+        dot(ax, *int8, colour=colour, marker="s")
+        dot(ax, *cached, colour=colour, marker="^")
 
-    # B — activation memory.  The highlighted point is the recommended deployment configuration.
-    ax = axes[1]
-    for row in rows:
-        c = row["colour"]
-        ax.plot([row["memory_int8_normal"], row["memory_int8_cached"]], [row["f1_int8"], row["f1_int8_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
-        dot(ax, row["memory_fp32_normal"], row["f1_fp32"], colour=c, marker="o")
-        dot(ax, row["memory_int8_normal"], row["f1_int8"], colour=c, marker="s")
-        dot(ax, row["memory_int8_cached"], row["f1_int8_cached"], colour=c, marker="^")
-    best = rows[-1]
-    ax.scatter(
-        best["memory_int8_cached"],
-        best["f1_int8_cached"],
-        s=190,
-        marker="o",
-        facecolor="none",
-        edgecolor=HIGHLIGHT,
-        linewidth=2.6,
-        zorder=5,
-    )
-    ax.annotate(
-        "best streamed F1\nat minimum memory",
-        (best["memory_int8_cached"], best["f1_int8_cached"]),
-        xytext=(31, -15),
-        textcoords="offset points",
-        fontsize=8.3,
-        color=INK,
-        weight="bold",
-        arrowprops={"arrowstyle": "-", "color": HIGHLIGHT, "lw": 1.5},
-    )
-    add_context_labels(ax, rows, "memory_fp32_normal", "f1_fp32", log_x=True)
-    ax.set_title("B. Peak activation memory", loc="left", weight="bold", fontsize=11)
-    ax.set_xlabel("Peak activation memory (KiB, log scale)")
+    add_context_labels(ax, rows, x_normal_fp32, "f1_fp32", log_x=log_x)
+    ax.set_title(f"{panel_label}. {title}", loc="left", weight="bold", fontsize=12)
+    ax.set_xlabel(xlabel)
     ax.set_ylabel("Test macro-F1")
+    ax.set_ylim(0.455, 0.72)
+    ax.set_yticks([0.46, 0.52, 0.58, 0.64, 0.70])
     soften_axes(ax)
-
-    # C — artifact storage. Split graphs are stored separately for caching.
-    ax = axes[2]
-    for row in rows:
-        c = row["colour"]
-        ax.plot([row["size_int8_kib"], row["size_int8_cached_kib"]], [row["f1_int8"], row["f1_int8_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
-        dot(ax, row["size_fp32_kib"], row["f1_fp32"], colour=c, marker="o")
-        dot(ax, row["size_int8_kib"], row["f1_int8"], colour=c, marker="s")
-        dot(ax, row["size_int8_cached_kib"], row["f1_int8_cached"], colour=c, marker="^")
-    add_context_labels(ax, rows, "size_fp32_kib", "f1_fp32", log_x=False)
-    ax.set_title("C. Exported ONNX size", loc="left", weight="bold", fontsize=11)
-    ax.set_xlabel("Exported ONNX artifact size (KiB)")
-    ax.set_ylabel("Test macro-F1")
-    soften_axes(ax)
-
-    for ax in axes:
-        ax.set_ylim(0.455, 0.72)
-        ax.set_yticks([0.46, 0.52, 0.58, 0.64, 0.70])
 
     context_legend = [
         Line2D([0], [0], marker="o", color=row["colour"], linestyle="", markersize=7, label=row["label"])
@@ -222,29 +205,43 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
     form_legend = [
         Line2D([0], [0], marker="o", color=INK, markerfacecolor=INK, linestyle="", markersize=7, label="float32, normal"),
         Line2D([0], [0], marker="s", color=INK, markerfacecolor=INK, linestyle="", markersize=7, label="int8, normal"),
-        Line2D(
-            [0],
-            [0],
-            marker="^",
-            color=INK,
-            markerfacecolor=INK,
-            linestyle="",
-            markersize=7,
-            label="int8, cached embeddings",
-        ),
+        Line2D([0], [0], marker="^", color=INK, markerfacecolor=INK, linestyle="", markersize=7, label="int8, cached embeddings"),
+        Line2D([0], [0], color=INK, linewidth=1.4, label="solid arrow: static int8 quantization"),
+        Line2D([0], [0], color=INK, linewidth=1.4, linestyle=(0, (2, 2)), label="dotted arrow: embedding cache"),
     ]
     fig.legend(
         handles=context_legend + form_legend,
         loc="lower center",
-        ncol=2,
+        ncol=3,
         frameon=False,
         fontsize=8.2,
-        bbox_to_anchor=(0.5, 0.012),
+        bbox_to_anchor=(0.5, 0.01),
     )
-    fig.subplots_adjust(left=0.13, right=0.97, top=0.93, bottom=0.12, hspace=0.48)
+    fig.subplots_adjust(left=0.13, right=0.97, top=0.84, bottom=0.20)
     fig.savefig(path, bbox_inches="tight")
     fig.savefig(path.with_suffix(".png"), dpi=220, bbox_inches="tight")
     plt.close(fig)
+
+
+def deployment_tradeoff_figures(rows: list[dict], assets: Path) -> None:
+    """Render individual latency, memory, and model-size figures for slides."""
+    specs = [
+        ("A", "CPU latency", "latency_fp32_normal", "latency_int8_normal", "latency_int8_cached", "Median inference latency (ms, log scale)", True, "edge-window-tcn-latency-tradeoff.svg"),
+        ("B", "Peak activation memory", "memory_fp32_normal", "memory_int8_normal", "memory_int8_cached", "Peak activation memory (KiB, log scale)", True, "edge-window-tcn-memory-tradeoff.svg"),
+        ("C", "Exported ONNX size", "size_fp32_kib", "size_int8_kib", "size_int8_cached_kib", "Exported ONNX artifact size (KiB)", False, "edge-window-tcn-model-size-tradeoff.svg"),
+    ]
+    for panel_label, title, fp32, int8, cached, xlabel, log_x, filename in specs:
+        deployment_tradeoff_figure(
+            rows,
+            panel_label=panel_label,
+            title=title,
+            x_normal_fp32=fp32,
+            x_normal_int8=int8,
+            x_cached_int8=cached,
+            xlabel=xlabel,
+            log_x=log_x,
+            path=assets / filename,
+        )
 
 
 def label_box(ax: plt.Axes, x: float, y: float, width: float, height: float, text: str, *, face: str, edge: str, fontsize: float = 8.2) -> None:
@@ -350,7 +347,7 @@ def cache_explainer(rows: list[dict], path: Path) -> None:
 def main() -> None:
     ASSETS.mkdir(parents=True, exist_ok=True)
     rows = load_rows()
-    deployment_tradeoffs(rows, ASSETS / "edge-window-tcn-deployment-tradeoffs.svg")
+    deployment_tradeoff_figures(rows, ASSETS)
     cache_explainer(rows, ASSETS / "edge-window-tcn-embedding-cache-explainer.svg")
     print("Wrote Edge Window TCN deployment summary figures.")
 

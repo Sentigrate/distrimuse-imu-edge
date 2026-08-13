@@ -56,19 +56,34 @@ they should not be interpreted as different learned model capacities.
 
 ## Deployment trade-offs
 
-![Test macro-F1 versus latency, activation memory, and ONNX artifact size](edge_window_tcn_context_report_assets/edge-window-tcn-deployment-tradeoffs.svg)
+### CPU latency
 
-Figure description: colour denotes temporal context; circles are normal
-float32, squares are normal static-int8, and up-triangles are cached static
-int8. The figure deliberately focuses on these three deployment forms: the
-uncompressed baseline, compression, and the final compressed cache. Every point is measured from the
+![Test macro-F1 versus CPU latency](edge_window_tcn_context_report_assets/edge-window-tcn-latency-tradeoff.svg)
+
+### Peak activation memory
+
+![Test macro-F1 versus peak activation memory](edge_window_tcn_context_report_assets/edge-window-tcn-memory-tradeoff.svg)
+
+### Exported ONNX size
+
+![Test macro-F1 versus exported ONNX artifact size](edge_window_tcn_context_report_assets/edge-window-tcn-model-size-tradeoff.svg)
+
+Figure description: each colour denotes one temporal context. A circle is the
+normal float32 model, a square is normal static-int8, and an up-triangle is
+static-int8 with cached embeddings. The solid arrow follows the quantization
+step (float32 → int8); the dotted arrow follows the scheduling step (int8 →
+int8 with an embedding cache). These figures deliberately focus on the three
+presentation-relevant deployment forms: the uncompressed baseline,
+compression, and the final compressed cache. Every point is measured from the
 published shared ONNX artifacts. Cached points use only real, non-padded
 contexts; normal points include the configuration's zero-padded boundaries.
-Panel B includes the resident float32 embedding ring buffer as well as actual
-ONNX Runtime-profiled node input/output activations. Latencies use 20 warm-up
-calls and 100 timed calls on one held-out test input. Cached deployment stores
-a split encoder and temporal graph pair; the table reports the exact combined
-and split artifact sizes.
+The memory panel includes the resident float32 embedding ring buffer as well
+as actual ONNX Runtime-profiled node input/output activations. Latencies use
+20 warm-up calls and 100 timed calls on one held-out test input. Cached
+deployment stores a split encoder and temporal graph pair; the model-size
+panel and table report the exact combined and split artifact sizes. The final
+15-window int8 cached configuration is the accuracy-led streaming operating
+point: 0.6921 valid-stream macro-F1 at 11.31 KiB peak activation plus cache.
 
 | Context | Precision / scheduling | Test macro-F1 | Median host ONNX Runtime latency | Peak activation + cache | ONNX artifact size |
 |---|---|---:|---:|---:|---:|
