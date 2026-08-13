@@ -9,12 +9,14 @@ evaluated in float32 and with static ONNX int8 post-training quantisation.
 
 The main result is that the **15-window, int8, embedding-cached** design is the
 strongest deployment candidate for an application that can tolerate a 7 s
-look-ahead: it retains a test macro-F1 of **0.6930** (float32: 0.6935) while
-reducing the actual ONNX Runtime-profiled activation-plus-cache working set
-from **146.40 KiB** for normal int8 execution to **11.31 KiB** with cached
-embeddings. The cache path is implemented in `distrimuse-ds-shared` and takes
-**0.129 ms** median host ONNX Runtime time per hop (20 warm-ups, 100 timed
-calls). The corresponding float32 cache measures 45.47 KiB and 0.152 ms.
+look-ahead: static int8 retains a full-test macro-F1 of **0.6930** (float32:
+0.6935), and its real cached stream attains **0.6921** on the valid contexts.
+Caching reduces the actual ONNX Runtime-profiled activation-plus-cache working
+set from **146.40 KiB** for normal int8 execution to **11.31 KiB**. The cache
+path is implemented in `distrimuse-ds-shared` and takes
+**0.125 ms** median host ONNX Runtime time per hop (100 warm-ups, then the
+median of nine 500-call trials). The corresponding float32 cache measures
+45.47 KiB and 0.139 ms.
 
 ![Overview of the 15-window Edge Window TCN architecture](edge_window_tcn_context_report_assets/edge-window-tcn-architecture-overview-intro.png)
 
@@ -48,11 +50,18 @@ for window `t` is emitted only after windows through `t+7` have arrived. The
 look-ahead is a property of the model’s future context, not a side effect of
 caching.
 
-All three width-0.25 models have 16,569 learned parameters and a 0.084 MB
-float32 state dict: context changes the input sequence and execution cost, not
-the learned weight count. Exported ONNX artifact sizes differ slightly by
-context because the exported graph contains input-shape-dependent bookkeeping;
-they should not be interpreted as different learned model capacities.
+All three width-0.25 configurations have the same 16,569 parameter *shapes*
+and a 0.084 MB float32 PyTorch state dict. They are trained separately, so the
+learned values are not shared or identical. The ONNX file is a deployable graph
+rather than a pure weight dump: it also contains operators, constant tensors,
+shape/padding logic, and metadata. For a one-window input, export can fold the
+TCN into one-position projections and remove convolution taps that can never
+be reached. The 8-window causal export includes asymmetric-padding logic,
+whereas the 15-window non-causal export uses a simpler symmetric-padding
+graph. Static int8 additionally carries quantization scales and zero points;
+cached inference stores two graphs (encoder plus temporal head). Therefore,
+ONNX artifact size is a packaging/storage metric, not a measure of learned
+model capacity or peak working memory.
 
 ## Deployment trade-offs
 
@@ -60,42 +69,55 @@ they should not be interpreted as different learned model capacities.
 
 ![Test macro-F1 versus CPU latency](edge_window_tcn_context_report_assets/edge-window-tcn-latency-tradeoff.svg)
 
+Figure description — latency: colour denotes temporal context; circles are
+normal float32, squares normal static-int8, and up-triangles static-int8 with
+cached embeddings. A solid arrow is the quantization step (float32 → int8),
+and a dotted arrow is the caching step (int8 → cached int8). The dotted arrows
+mostly move left because caching runs the CNN for only the arriving window at
+each hop; the small vertical offsets are the separately measured F1 values.
+Latency is the median of nine 500-call ONNX Runtime trials after 100 warm-up
+calls on one held-out input.
+
 ### Peak activation memory
 
 ![Test macro-F1 versus peak activation memory](edge_window_tcn_context_report_assets/edge-window-tcn-memory-tradeoff.svg)
+
+Figure description — memory: the same markers and arrows apply. Without
+caching, every raw context window is processed by the CNN on each hop, so the
+normal schedule’s activation footprint grows sharply with context length.
+Quantization lowers the tensor footprint; caching then removes repeated CNN
+activations. Measurements include the resident float32 embedding ring buffer
+and ONNX Runtime-profiled node input/output activations, but exclude weights,
+scales, and process-wide allocator reservations. The 15-window int8 cached
+configuration is the accuracy-led streaming operating point: 0.6921
+valid-stream macro-F1 at 11.31 KiB.
 
 ### Exported ONNX size
 
 ![Test macro-F1 versus exported ONNX artifact size](edge_window_tcn_context_report_assets/edge-window-tcn-model-size-tradeoff.svg)
 
-Figure description: each colour denotes one temporal context. A circle is the
-normal float32 model, a square is normal static-int8, and an up-triangle is
-static-int8 with cached embeddings. The solid arrow follows the quantization
-step (float32 → int8); the dotted arrow follows the scheduling step (int8 →
-int8 with an embedding cache). These figures deliberately focus on the three
-presentation-relevant deployment forms: the uncompressed baseline,
-compression, and the final compressed cache. Every point is measured from the
-published shared ONNX artifacts. Cached points use only real, non-padded
-contexts; normal points include the configuration's zero-padded boundaries.
-The memory panel includes the resident float32 embedding ring buffer as well
-as actual ONNX Runtime-profiled node input/output activations. Latencies use
-20 warm-up calls and 100 timed calls on one held-out test input. Cached
-deployment stores a split encoder and temporal graph pair; the model-size
-panel and table report the exact combined and split artifact sizes. The final
-15-window int8 cached configuration is the accuracy-led streaming operating
-point: 0.6921 valid-stream macro-F1 at 11.31 KiB peak activation plus cache.
+Figure description — artifact size: the same markers and arrows apply. This
+panel reports disk size of the complete ONNX deployment artifact: one combined
+graph for normal inference and the encoder-plus-temporal graph pair for cached
+inference. It includes graph structure and quantization constants as well as
+weights, so it need not track parameter count. The 8-window causal artifact is
+larger than the 15-window non-causal artifact because its exported
+asymmetric-padding graph has more bookkeeping nodes; that does not mean it has
+more learned parameters. Every point is measured from the published shared
+ONNX artifacts. Cached F1 uses only real, non-padded contexts; normal F1 uses
+the configuration's zero-padded boundaries.
 
 | Context | Precision / scheduling | Test macro-F1 | Median host ONNX Runtime latency | Peak activation + cache | ONNX artifact size |
 |---|---|---:|---:|---:|---:|
-| Current only | float32, normal | 0.5123 (full) | 0.058 ms | 44.06 KiB | 63.14 KiB |
-| Current only | int8, normal | 0.4756 (full) | 0.087 ms | 9.90 KiB | 60.62 KiB |
-| Current only | int8, cached | 0.4756 (valid stream) | 0.047 ms | 9.99 KiB | 44.46 KiB |
-| Past 7 + current | float32, normal | 0.5517 (full) | 0.158 ms | 317.06 KiB | 95.43 KiB |
-| Past 7 + current | int8, normal | 0.5282 (full) | 0.172 ms | 78.15 KiB | 74.85 KiB |
-| Past 7 + current | int8, cached | 0.5279 (valid stream) | 0.134 ms | 10.65 KiB | 70.75 KiB |
-| Past 7 + current + future 7 | float32, normal | **0.6935** (full) | 0.272 ms | 590.06 KiB | 77.63 KiB |
-| Past 7 + current + future 7 | int8, normal | **0.6930** (full) | 0.253 ms | 146.40 KiB | 50.19 KiB |
-| Past 7 + current + future 7 | int8, cached | **0.6921** (valid stream) | **0.129 ms** | **11.31 KiB** | **45.47 KiB** |
+| Current only | float32, normal | 0.5123 (full) | 0.062 ms | 44.06 KiB | 63.14 KiB |
+| Current only | int8, normal | 0.4756 (full) | 0.049 ms | 9.90 KiB | 60.62 KiB |
+| Current only | int8, cached | 0.4756 (valid stream) | 0.046 ms | 9.99 KiB | 44.46 KiB |
+| Past 7 + current | float32, normal | 0.5517 (full) | 0.173 ms | 317.06 KiB | 95.43 KiB |
+| Past 7 + current | int8, normal | 0.5282 (full) | 0.147 ms | 78.15 KiB | 74.85 KiB |
+| Past 7 + current | int8, cached | 0.5279 (valid stream) | 0.121 ms | 10.65 KiB | 70.75 KiB |
+| Past 7 + current + future 7 | float32, normal | **0.6935** (full) | 0.291 ms | 590.06 KiB | 77.63 KiB |
+| Past 7 + current + future 7 | int8, normal | **0.6930** (full) | 0.266 ms | 146.40 KiB | 50.19 KiB |
+| Past 7 + current + future 7 | int8, cached | **0.6921** (valid stream) | **0.125 ms** | **11.31 KiB** | **45.47 KiB** |
 
 The strongest accuracy result is the 15-window model. Adding seven past
 windows raised macro-F1 from 0.5123 to 0.5517; adding seven future windows
@@ -137,11 +159,11 @@ validated class-for-class on the held-out valid stream.
 |---|---:|---:|---:|
 | CNN encodes per 1 s hop | 15 windows | 1 arriving window | 15× less repeated CNN work |
 | Float32 peak activation + cache | 590.06 KiB | **45.47 KiB** | **13.0× lower** |
-| Float32 median host ONNX Runtime latency | 0.272 ms | **0.152 ms** | 1.79× faster |
+| Float32 median host ONNX Runtime latency | 0.291 ms | **0.139 ms** | 2.09× faster |
 | Float32 macro-F1 | 0.6935 (full) | 0.6925 (valid stream) | boundary windows excluded |
 | Int8 peak activation + cache | 146.40 KiB | **11.31 KiB** | **12.9× lower** |
 | Int8 macro-F1 | 0.6930 (full) | 0.6921 (valid stream) | boundary windows excluded |
-| Int8 cached latency | 0.253 ms | **0.129 ms** | 1.96× faster |
+| Int8 median host ONNX Runtime latency | 0.266 ms | **0.125 ms** | 2.13× faster |
 
 \*The cache intentionally makes no prediction where a real device lacks needed
 history or look-ahead. Thus, the cached F1 uses 10,292 real contexts rather
@@ -262,13 +284,13 @@ There are two sensible operating points.
 
 1. **Causal / no decision delay:** use **past 7 + current, float32 cached**.
    It reaches 0.5515 macro-F1 on valid streamed test contexts with no
-   look-ahead, 44.81 KiB measured activation-plus-cache peak, and 0.134 ms
+   look-ahead, 44.81 KiB measured activation-plus-cache peak, and 0.131 ms
    median host ONNX Runtime latency.
 
 2. **Best accuracy per peak-memory budget:** use **past 7 + current + future
    7, int8 with embedding caching**. It reaches 0.6921 macro-F1 on 10,292
    valid streamed test contexts with the lowest measured working set among the
-   highest-accuracy choices (11.31 KiB) and 0.129 ms median host latency. This
+   highest-accuracy choices (11.31 KiB) and 0.125 ms median host latency. This
    is the preferred final design when a 7 s decision delay is acceptable. It
    runs as `past7_future7_int8 --stream --streaming-cache` in
    `distrimuse-ds-shared`. Host measurements still are not a claim about a
@@ -280,9 +302,9 @@ There are two sensible operating points.
   whose people exactly match `configs/split.yaml`'s configured test set:
   8, 15, 24, 26, and 27. Normal inference reports every zero-padded target;
   cached inference reports only genuine contexts available to a live stream.
-- Latencies are median host ONNX Runtime times for 100 calls after 20 warm-ups,
-  using a held-out test input. They compare scheduling choices on this host,
-  not a microcontroller guarantee.
+- Latencies are the median of nine 500-call host ONNX Runtime trials after
+  100 warm-ups, using a held-out test input. They compare scheduling choices
+  on this host, not a microcontroller guarantee.
 - Peak memory is measured from ONNX Runtime profiling of the concrete node
   input/output type-shapes. It is the largest node-local activation footprint,
   plus the resident 24-D float32 embedding ring buffer for cached inference.

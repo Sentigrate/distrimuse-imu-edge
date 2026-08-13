@@ -8,7 +8,7 @@
     27
   ],
   "normalization": "models/config/imu_shared_config.yaml preprocessing.normalization",
-  "latency_protocol": "20 warm-ups + 100 timed calls on one held-out input",
+  "latency_protocol": "100 warm-ups + 9 trials of 500 timed calls on one held-out input",
   "rows": [
     {
       "variant": "current_fp32",
@@ -29,16 +29,18 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.05781254731118679,
-          "p95_ms": 0.06541702896356583,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.061728875152766705,
+          "p95_ms": 0.10270788334310055,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.055541982874274254,
-          "p95_ms": 0.0677080824971199,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.050749396905303,
+          "p95_ms": 0.09112502448260784,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         }
       },
       "activation_peak_graph_native": {
@@ -75,16 +77,18 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.08695852011442184,
-          "p95_ms": 0.10495912283658981,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.04854192957282066,
+          "p95_ms": 0.09629200212657452,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.04693749360740185,
-          "p95_ms": 0.057957833632826805,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.045583583414554596,
+          "p95_ms": 0.08504209108650684,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         }
       },
       "activation_peak_graph_native": {
@@ -121,16 +125,18 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.1580419484525919,
-          "p95_ms": 0.25170808658003807,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.1729584764689207,
+          "p95_ms": 0.24174991995096207,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.10272907093167305,
-          "p95_ms": 0.14016684144735336,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.13068760745227337,
+          "p95_ms": 0.15829107724130154,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         }
       },
       "activation_peak_graph_native": {
@@ -167,16 +173,18 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.17231248784810305,
-          "p95_ms": 0.20420807413756847,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.1471459399908781,
+          "p95_ms": 0.2088751643896103,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.13445806689560413,
-          "p95_ms": 0.3988330718129873,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.12056261766701937,
+          "p95_ms": 0.14487490989267826,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         }
       },
       "activation_peak_graph_native": {
@@ -213,16 +221,18 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.27229159604758024,
-          "p95_ms": 0.4023339133709669,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.2913125790655613,
+          "p95_ms": 0.3635419998317957,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.15225005336105824,
-          "p95_ms": 0.22770813666284084,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.13891642447561026,
+          "p95_ms": 0.20491681061685085,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         }
       },
       "activation_peak_graph_native": {
@@ -259,16 +269,18 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.25345792528241873,
-          "p95_ms": 0.30670897103846073,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.26618747506290674,
+          "p95_ms": 0.34433300606906414,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.12943742331117392,
-          "p95_ms": 0.17854105681180954,
-          "warmup_calls": 20,
-          "timed_calls": 100
+          "median_ms": 0.12539559975266457,
+          "p95_ms": 0.16154209151864052,
+          "warmup_calls": 100,
+          "timed_calls_per_trial": 500,
+          "timing_trials": 9
         }
       },
       "activation_peak_graph_native": {

@@ -39,8 +39,9 @@ DEFAULT_OUTPUT = (
     REPO_ROOT
     / "experiments/results/edge_window_tcn_context_report_assets/shared_onnx_streaming_benchmark.json"
 )
-WARMUP_CALLS = 20
-TIMED_CALLS = 100
+WARMUP_CALLS = 100
+TIMED_CALLS = 500
+TIMING_TRIALS = 9
 FULL_EVAL_BATCH = 64
 
 
@@ -50,20 +51,38 @@ def _add_shared_repo(shared_root: Path) -> None:
         sys.path.insert(0, root)
 
 
-def _time_ms(fn: Callable[[], Any], *, warmup: int = WARMUP_CALLS, repeats: int = TIMED_CALLS) -> dict[str, float]:
+def _time_ms(
+    fn: Callable[[], Any],
+    *,
+    warmup: int = WARMUP_CALLS,
+    repeats: int = TIMED_CALLS,
+    trials: int = TIMING_TRIALS,
+) -> dict[str, float]:
+    """Return a stable batch-one latency after session warm-up.
+
+    Small static-int8 ONNX graphs can incur one-off kernel preparation costs
+    beyond a short warm-up.  Reporting the median of several timed-trial
+    medians keeps the deployment comparison from reflecting that transient.
+    """
     for _ in range(warmup):
         fn()
     values: list[float] = []
-    for _ in range(repeats):
-        start = time.perf_counter()
-        fn()
-        values.append((time.perf_counter() - start) * 1000.0)
+    trial_medians: list[float] = []
+    for _ in range(trials):
+        trial_values: list[float] = []
+        for _ in range(repeats):
+            start = time.perf_counter()
+            fn()
+            trial_values.append((time.perf_counter() - start) * 1000.0)
+        trial_medians.append(float(statistics.median(trial_values)))
+        values.extend(trial_values)
     values.sort()
     return {
-        "median_ms": float(statistics.median(values)),
+        "median_ms": float(statistics.median(trial_medians)),
         "p95_ms": float(values[max(0, int(0.95 * len(values)) - 1)]),
         "warmup_calls": warmup,
-        "timed_calls": repeats,
+        "timed_calls_per_trial": repeats,
+        "timing_trials": trials,
     }
 
 
@@ -354,7 +373,10 @@ def main() -> None:
                 "test_windows": str(test_path.relative_to(REPO_ROOT)),
                 "test_people": sorted(set(int(value) for value in payload["person_ids"])),
                 "normalization": "models/config/imu_shared_config.yaml preprocessing.normalization",
-                "latency_protocol": f"{WARMUP_CALLS} warm-ups + {TIMED_CALLS} timed calls on one held-out input",
+                "latency_protocol": (
+                    f"{WARMUP_CALLS} warm-ups + {TIMING_TRIALS} trials of "
+                    f"{TIMED_CALLS} timed calls on one held-out input"
+                ),
                 "rows": rows,
             },
             indent=2,

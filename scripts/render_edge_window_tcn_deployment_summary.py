@@ -172,13 +172,6 @@ def deployment_tradeoff_figure(
         y=0.97,
         ha="left",
     )
-    fig.text(
-        0.08,
-        0.925,
-        "Held-out configured test split. Follow each colour: float32 normal → int8 normal → int8 cached embeddings.",
-        color=MUTED,
-        fontsize=9.3,
-    )
     for row in rows:
         colour = row["colour"]
         fp32 = (row[x_normal_fp32], row["f1_fp32"])
@@ -217,7 +210,7 @@ def deployment_tradeoff_figure(
         fontsize=8.2,
         bbox_to_anchor=(0.5, 0.01),
     )
-    fig.subplots_adjust(left=0.13, right=0.97, top=0.84, bottom=0.20)
+    fig.subplots_adjust(left=0.13, right=0.97, top=0.88, bottom=0.20)
     fig.savefig(path, bbox_inches="tight")
     fig.savefig(path.with_suffix(".png"), dpi=220, bbox_inches="tight")
     plt.close(fig)
