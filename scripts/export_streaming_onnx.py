@@ -7,11 +7,12 @@ partner consuming the ONNX-only ``models/imu`` package in
 ``window_encoder``/``temporal`` as separate callables — the published ONNX
 graphs are single end-to-end graphs (raw windows in, logits out).
 
-This script exports two ONNX graphs per context mode instead of one:
+This script exports two ONNX graphs per context mode and precision instead of
+one combined graph:
 
 - ``<label>_encoder_fp32.onnx``: ``window_encoder`` alone, one raw window
   ``(1, C, T)`` in, one embedding ``(1, D)`` out.
-- ``<label>_temporal_fp32.onnx``: ``temporal`` + position-select + ``head``,
+- ``<label>_temporal_<precision>.onnx``: ``temporal`` + position-select + ``head``,
   the full embedding buffer ``(1, D, total_context_len)`` in, logits
   ``(1, n_classes)`` out.
 
@@ -20,35 +21,44 @@ caching using two ``onnxruntime.InferenceSession``s instead of one PyTorch
 module — see ``distrimuse-ds-shared/models/imu/pipeline.py``'s
 ``StreamingOnnxModel``, which is exactly that.
 
-int8 is intentionally out of scope here: the source PyTorch implementation
-(``inference/streaming.py``) is float32-only too (see
-``experiments/results/edge_window_tcn_context_comparison.md``'s "Streaming,
-embedding-cached inference" section), so this keeps parity rather than
-introducing a streaming/int8 combination that has not been measured anywhere.
+For static int8, the encoder and temporal graphs are calibrated separately on
+the training split.  The generated pair is a real int8 streaming deployment
+path, not a same-shapes memory estimate: the encoder's output is dequantized to
+float at the ONNX boundary, then consumed by the int8 temporal graph.
 
 Run from the repository root::
 
     uv run python scripts/export_streaming_onnx.py
 
-Writes six ONNX files (3 context modes x 2 graph parts) under
-``experiments/exports/streaming_onnx/``, and verifies each pair reproduces
-the combined checkpoint's batched ``forward()`` output exactly (up to
-floating-point reassociation) when fed the same window stream one window at
-a time — the same equivalence ``tests/test_streaming_equivalence.py`` checks
-for the in-process PyTorch path, checked again here for the exported graphs.
+Writes twelve ONNX files (3 context modes x 2 precisions x 2 graph parts) under
+``experiments/exports/streaming_onnx/``. Float32 pairs are checked for exact
+agreement with the combined checkpoint (up to floating-point reassociation).
+The int8 pairs receive a separate ONNX Runtime smoke check here; downstream
+equivalence is checked by the shared-package test against the published split
+graphs.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import onnxruntime as ort
 import torch
 from torch import nn
 
-from distrimuse_imu_edge.compression.onnx_int8 import DEFAULT_OPSET
-from distrimuse_imu_edge.training.runner import load_checkpoint_model
+from distrimuse_imu_edge.compression.onnx_int8 import (
+    DEFAULT_OPSET,
+    quantize_onnx_static,
+)
+from distrimuse_imu_edge.data.config import data_config_from_mapping
+from distrimuse_imu_edge.data.sequence import SequenceWindowDataset
+from distrimuse_imu_edge.data.windowing import ChannelNormalizer
+from distrimuse_imu_edge.training.runner import load_checkpoint_model, set_seed
+from torch.utils.data import DataLoader
 
 RESULTS = Path("experiments/results")
 OUT_DIR = Path("experiments/exports/streaming_onnx")
@@ -64,6 +74,21 @@ ENCODER_INPUT_NAME = "window"
 ENCODER_OUTPUT_NAME = "embedding"
 TEMPORAL_INPUT_NAME = "embeddings"
 TEMPORAL_OUTPUT_NAME = "logits"
+CALIBRATION_BATCHES = 32
+
+
+class _NamedCalibrationReader:
+    """ONNX Runtime calibration reader with a graph-specific input name."""
+
+    def __init__(self, *, input_name: str, batches: Iterator[np.ndarray]) -> None:
+        self._input_name = input_name
+        self._batches = batches
+
+    def get_next(self) -> dict[str, np.ndarray] | None:
+        batch = next(self._batches, None)
+        if batch is None:
+            return None
+        return {self._input_name: batch}
 
 
 class _TemporalHead(nn.Module):
@@ -84,6 +109,114 @@ class _TemporalHead(nn.Module):
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
         temporal_out = self.temporal(embeddings).transpose(1, 2)  # (B, N, D)
         return self.head(temporal_out[:, self.current_index])
+
+
+@dataclass
+class _SplitCalibrationData:
+    """The checkpoint's normalized training windows as sequence batches.
+
+    The run may no longer have its source parquet split available, but its raw
+    training-window cache is a stable, leakage-free calibration source.  Using
+    that cache also recreates the normalizer fitted by ``IMUEdgeDataModule``.
+    """
+
+    dataset: SequenceWindowDataset
+    batch_size: int
+
+    def loader(self) -> DataLoader:
+        return DataLoader(self.dataset, batch_size=self.batch_size, shuffle=True, num_workers=0)
+
+
+def _encoder_calibration_batches(
+    data: _SplitCalibrationData, *, limit: int
+) -> Iterator[np.ndarray]:
+    """Yield normalized individual windows as ``(B*N, C, T)`` for the CNN."""
+    for index, (context, _, _) in enumerate(data.loader()):
+        if index >= limit:
+            return
+        batch, windows, samples, channels = context.shape
+        flat = context.reshape(batch * windows, samples, channels).transpose(1, 2)
+        yield np.ascontiguousarray(flat.numpy(), dtype=np.float32)
+
+
+def _temporal_calibration_batches(
+    data: _SplitCalibrationData, model: nn.Module, *, limit: int
+) -> Iterator[np.ndarray]:
+    """Yield full float32 embedding buffers as ``(B, D, N)`` for the TCN."""
+    model.eval()
+    with torch.no_grad():
+        for index, (context, _, _) in enumerate(data.loader()):
+            if index >= limit:
+                return
+            embeddings = model.encode_windows(context).transpose(1, 2)
+            yield np.ascontiguousarray(embeddings.numpy(), dtype=np.float32)
+
+
+def _build_calibration_data(checkpoint: dict[str, Any]) -> _SplitCalibrationData:
+    """Load the checkpoint's cached training windows for leakage-free PTQ."""
+    data_cfg = data_config_from_mapping({"data": checkpoint["config"]["data"]})
+    samples = int(round(data_cfg.window_size_s * 104))
+    candidates: list[Path] = []
+    for path in data_cfg.window_cache_dir.glob("train_*.npz"):
+        with np.load(path, allow_pickle=False) as payload:
+            if "X" in payload and payload["X"].shape[1:] == (samples, len(data_cfg.sensor_cols)):
+                candidates.append(path)
+    if len(candidates) != 1:
+        found = ", ".join(str(path) for path in candidates) or "none"
+        raise FileNotFoundError(
+            "Expected exactly one compatible cached training-window archive for split ONNX "
+            f"calibration, found: {found}."
+        )
+    with np.load(candidates[0], allow_pickle=False) as payload:
+        x = payload["X"].astype(np.float32)
+        y = payload["y"].astype(np.int64)
+        person_ids = payload["person_ids"].astype(np.int64)
+        scenario_ids = payload["scenario_ids"].astype(np.int64)
+        starts = payload["window_starts_s"].astype(np.float64)
+    normalized = ChannelNormalizer().fit(x).transform(x)
+    return _SplitCalibrationData(
+        dataset=SequenceWindowDataset(
+            normalized,
+            y,
+            person_ids,
+            scenario_ids,
+            context_len=data_cfg.context_len,
+            future_context_len=data_cfg.future_context_len,
+            window_starts_s=starts,
+        ),
+        batch_size=data_cfg.batch_size,
+    )
+
+
+def _export_int8_pair(spec: dict, data: _SplitCalibrationData) -> tuple[Path, Path]:
+    """Statically quantize independently exported CNN and temporal ONNX graphs."""
+    label = str(spec["label"])
+    out_dir = Path(spec["encoder_path"]).parent
+    encoder_int8_path = out_dir / f"{label}_encoder_int8.onnx"
+    temporal_int8_path = out_dir / f"{label}_temporal_int8.onnx"
+
+    # Recreate the seeded training-loader order for each graph.  Both readers
+    # see only the training split, while each observes the representation its
+    # graph actually receives at runtime.
+    set_seed(42)
+    quantize_onnx_static(
+        spec["encoder_path"],
+        encoder_int8_path,
+        calibration_reader=_NamedCalibrationReader(
+            input_name=ENCODER_INPUT_NAME,
+            batches=_encoder_calibration_batches(data, limit=CALIBRATION_BATCHES),
+        ),
+    )
+    set_seed(42)
+    quantize_onnx_static(
+        spec["temporal_path"],
+        temporal_int8_path,
+        calibration_reader=_NamedCalibrationReader(
+            input_name=TEMPORAL_INPUT_NAME,
+            batches=_temporal_calibration_batches(data, spec["model"], limit=CALIBRATION_BATCHES),
+        ),
+    )
+    return encoder_int8_path, temporal_int8_path
 
 
 def export_one(label: str, run_dir: str, out_dir: Path) -> dict:
@@ -141,6 +274,7 @@ def export_one(label: str, run_dir: str, out_dir: Path) -> dict:
     return {
         "label": label,
         "model": model,
+        "checkpoint": ckpt,
         "encoder_path": encoder_path,
         "temporal_path": temporal_path,
         "total_context_len": total_context_len,
@@ -151,7 +285,14 @@ def export_one(label: str, run_dir: str, out_dir: Path) -> dict:
     }
 
 
-def verify_one(spec: dict, *, n_windows: int = 30, seed: int = 0) -> None:
+def verify_one(
+    spec: dict,
+    *,
+    encoder_path: Path | None = None,
+    temporal_path: Path | None = None,
+    n_windows: int = 30,
+    seed: int = 0,
+) -> None:
     """Feed the same random window stream through PyTorch (batched) and the
     exported ONNX pair (streamed, one window at a time); assert every emitted
     prediction matches, mirroring tests/test_streaming_equivalence.py."""
@@ -167,10 +308,10 @@ def verify_one(spec: dict, *, n_windows: int = 30, seed: int = 0) -> None:
     options = ort.SessionOptions()
     options.log_severity_level = 3
     encoder_session = ort.InferenceSession(
-        str(spec["encoder_path"]), options, providers=["CPUExecutionProvider"]
+        str(encoder_path or spec["encoder_path"]), options, providers=["CPUExecutionProvider"]
     )
     temporal_session = ort.InferenceSession(
-        str(spec["temporal_path"]), options, providers=["CPUExecutionProvider"]
+        str(temporal_path or spec["temporal_path"]), options, providers=["CPUExecutionProvider"]
     )
 
     session = torch.randn(total_context_len + n_windows, t, n_channels)
@@ -212,6 +353,30 @@ def verify_one(spec: dict, *, n_windows: int = 30, seed: int = 0) -> None:
     print(f"[{spec['label']}] verified {checked} streamed predictions match batched forward() exactly")
 
 
+def smoke_int8_pair(spec: dict, *, encoder_path: Path, temporal_path: Path) -> None:
+    """Check that a statically quantized split pair accepts a live window stream."""
+    options = ort.SessionOptions()
+    options.log_severity_level = 3
+    encoder_session = ort.InferenceSession(
+        str(encoder_path), options, providers=["CPUExecutionProvider"]
+    )
+    temporal_session = ort.InferenceSession(
+        str(temporal_path), options, providers=["CPUExecutionProvider"]
+    )
+    rng = np.random.default_rng(0)
+    buffer: list[np.ndarray] = []
+    for _ in range(int(spec["total_context_len"])):
+        raw = rng.standard_normal((spec["t"], spec["n_channels"]), dtype=np.float32)
+        x = np.ascontiguousarray(raw.T[None], dtype=np.float32)
+        embedding = encoder_session.run(None, {ENCODER_INPUT_NAME: x})[0][0]
+        buffer.append(np.asarray(embedding, dtype=np.float32))
+    stacked = np.ascontiguousarray(np.stack(buffer, axis=0).T[None], dtype=np.float32)
+    logits = temporal_session.run(None, {TEMPORAL_INPUT_NAME: stacked})[0][0]
+    assert logits.shape == (9,), f"[{spec['label']}] unexpected int8 logits shape {logits.shape}"
+    assert np.isfinite(logits).all(), f"[{spec['label']}] int8 pair emitted non-finite logits"
+    print(f"[{spec['label']}] int8 split ONNX smoke check passed")
+
+
 def main() -> None:
     for label, run_dir in RUNS:
         print(f"[{label}] exporting split ONNX graphs...")
@@ -220,6 +385,14 @@ def main() -> None:
             path = spec[key]
             print(f"  wrote {path} ({path.stat().st_size / 1024:.1f} KiB)")
         verify_one(spec)
+        print(f"[{label}] calibrating split int8 graphs on the training split...")
+        calibration_data = _build_calibration_data(spec["checkpoint"])
+        encoder_int8_path, temporal_int8_path = _export_int8_pair(spec, calibration_data)
+        for path in (encoder_int8_path, temporal_int8_path):
+            print(f"  wrote {path} ({path.stat().st_size / 1024:.1f} KiB)")
+        # Separate static PTQ of the two graphs changes rounding points, so
+        # full-graph and split-graph int8 logits need not agree numerically.
+        smoke_int8_pair(spec, encoder_path=encoder_int8_path, temporal_path=temporal_int8_path)
 
 
 if __name__ == "__main__":

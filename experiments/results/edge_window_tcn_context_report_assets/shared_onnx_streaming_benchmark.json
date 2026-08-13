@@ -1,0 +1,290 @@
+{
+  "test_windows": "cache/windows/test_e08d1a9b655d553c.npz",
+  "test_people": [
+    8,
+    15,
+    24,
+    26,
+    27
+  ],
+  "normalization": "models/config/imu_shared_config.yaml preprocessing.normalization",
+  "latency_protocol": "20 warm-ups + 100 timed calls on one held-out input",
+  "rows": [
+    {
+      "variant": "current_fp32",
+      "precision": "fp32",
+      "context_len": 1,
+      "current_index": 0,
+      "future_context_len": 0,
+      "test_full_zero_padded": {
+        "n_predictions": 10628,
+        "macro_f1": 0.5122560002264483,
+        "matches_shared_config": true
+      },
+      "test_stream_valid": {
+        "n_predictions": 10628,
+        "macro_f1_cached": 0.5122560002264483,
+        "macro_f1_combined_reference": 0.5122560002264483,
+        "class_agreement_with_combined": 1.0
+      },
+      "latency_host_onnxruntime": {
+        "normal": {
+          "median_ms": 0.05781254731118679,
+          "p95_ms": 0.06541702896356583,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        },
+        "cached": {
+          "median_ms": 0.055541982874274254,
+          "p95_ms": 0.0677080824971199,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        }
+      },
+      "activation_peak_graph_native": {
+        "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
+        "normal_bytes": 45120,
+        "normal_kib": 44.062,
+        "cached_encoder_bytes": 45120,
+        "cached_temporal_bytes": 384,
+        "cached_embedding_ring_buffer_bytes": 96,
+        "cached_bytes": 45216,
+        "cached_kib": 44.156
+      },
+      "onnx_artifact": {
+        "normal_kib": 63.141,
+        "cached_split_kib": 51.659
+      }
+    },
+    {
+      "variant": "current_int8",
+      "precision": "int8",
+      "context_len": 1,
+      "current_index": 0,
+      "future_context_len": 0,
+      "test_full_zero_padded": {
+        "n_predictions": 10628,
+        "macro_f1": 0.47563113394279033,
+        "matches_shared_config": true
+      },
+      "test_stream_valid": {
+        "n_predictions": 10628,
+        "macro_f1_cached": 0.47563113394279033,
+        "macro_f1_combined_reference": 0.47563113394279033,
+        "class_agreement_with_combined": 1.0
+      },
+      "latency_host_onnxruntime": {
+        "normal": {
+          "median_ms": 0.08695852011442184,
+          "p95_ms": 0.10495912283658981,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        },
+        "cached": {
+          "median_ms": 0.04693749360740185,
+          "p95_ms": 0.057957833632826805,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        }
+      },
+      "activation_peak_graph_native": {
+        "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
+        "normal_bytes": 10138,
+        "normal_kib": 9.9,
+        "cached_encoder_bytes": 10138,
+        "cached_temporal_bytes": 384,
+        "cached_embedding_ring_buffer_bytes": 96,
+        "cached_bytes": 10234,
+        "cached_kib": 9.994
+      },
+      "onnx_artifact": {
+        "normal_kib": 60.621,
+        "cached_split_kib": 44.456
+      }
+    },
+    {
+      "variant": "past7_fp32",
+      "precision": "fp32",
+      "context_len": 8,
+      "current_index": 7,
+      "future_context_len": 0,
+      "test_full_zero_padded": {
+        "n_predictions": 10628,
+        "macro_f1": 0.5516516216684534,
+        "matches_shared_config": true
+      },
+      "test_stream_valid": {
+        "n_predictions": 10460,
+        "macro_f1_cached": 0.5514980736565341,
+        "macro_f1_combined_reference": 0.5514980736565341,
+        "class_agreement_with_combined": 1.0
+      },
+      "latency_host_onnxruntime": {
+        "normal": {
+          "median_ms": 0.1580419484525919,
+          "p95_ms": 0.25170808658003807,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        },
+        "cached": {
+          "median_ms": 0.10272907093167305,
+          "p95_ms": 0.14016684144735336,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        }
+      },
+      "activation_peak_graph_native": {
+        "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
+        "normal_bytes": 324672,
+        "normal_kib": 317.062,
+        "cached_encoder_bytes": 45120,
+        "cached_temporal_bytes": 9312,
+        "cached_embedding_ring_buffer_bytes": 768,
+        "cached_bytes": 45888,
+        "cached_kib": 44.812
+      },
+      "onnx_artifact": {
+        "normal_kib": 95.435,
+        "cached_split_kib": 92.602
+      }
+    },
+    {
+      "variant": "past7_int8",
+      "precision": "int8",
+      "context_len": 8,
+      "current_index": 7,
+      "future_context_len": 0,
+      "test_full_zero_padded": {
+        "n_predictions": 10628,
+        "macro_f1": 0.5281951409237304,
+        "matches_shared_config": true
+      },
+      "test_stream_valid": {
+        "n_predictions": 10460,
+        "macro_f1_cached": 0.5279352078373534,
+        "macro_f1_combined_reference": 0.5279352078373534,
+        "class_agreement_with_combined": 1.0
+      },
+      "latency_host_onnxruntime": {
+        "normal": {
+          "median_ms": 0.17231248784810305,
+          "p95_ms": 0.20420807413756847,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        },
+        "cached": {
+          "median_ms": 0.13445806689560413,
+          "p95_ms": 0.3988330718129873,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        }
+      },
+      "activation_peak_graph_native": {
+        "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
+        "normal_bytes": 80026,
+        "normal_kib": 78.15,
+        "cached_encoder_bytes": 10138,
+        "cached_temporal_bytes": 2352,
+        "cached_embedding_ring_buffer_bytes": 768,
+        "cached_bytes": 10906,
+        "cached_kib": 10.65
+      },
+      "onnx_artifact": {
+        "normal_kib": 74.85,
+        "cached_split_kib": 70.753
+      }
+    },
+    {
+      "variant": "past7_future7_fp32",
+      "precision": "fp32",
+      "context_len": 15,
+      "current_index": 7,
+      "future_context_len": 7,
+      "test_full_zero_padded": {
+        "n_predictions": 10628,
+        "macro_f1": 0.6935259081092684,
+        "matches_shared_config": true
+      },
+      "test_stream_valid": {
+        "n_predictions": 10292,
+        "macro_f1_cached": 0.6925456433610765,
+        "macro_f1_combined_reference": 0.6925456433610765,
+        "class_agreement_with_combined": 1.0
+      },
+      "latency_host_onnxruntime": {
+        "normal": {
+          "median_ms": 0.27229159604758024,
+          "p95_ms": 0.4023339133709669,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        },
+        "cached": {
+          "median_ms": 0.15225005336105824,
+          "p95_ms": 0.22770813666284084,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        }
+      },
+      "activation_peak_graph_native": {
+        "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
+        "normal_bytes": 604224,
+        "normal_kib": 590.062,
+        "cached_encoder_bytes": 45120,
+        "cached_temporal_bytes": 9888,
+        "cached_embedding_ring_buffer_bytes": 1440,
+        "cached_bytes": 46560,
+        "cached_kib": 45.469
+      },
+      "onnx_artifact": {
+        "normal_kib": 77.634,
+        "cached_split_kib": 74.801
+      }
+    },
+    {
+      "variant": "past7_future7_int8",
+      "precision": "int8",
+      "context_len": 15,
+      "current_index": 7,
+      "future_context_len": 7,
+      "test_full_zero_padded": {
+        "n_predictions": 10628,
+        "macro_f1": 0.6929710734505496,
+        "matches_shared_config": true
+      },
+      "test_stream_valid": {
+        "n_predictions": 10292,
+        "macro_f1_cached": 0.6920939115188778,
+        "macro_f1_combined_reference": 0.6920939115188778,
+        "class_agreement_with_combined": 1.0
+      },
+      "latency_host_onnxruntime": {
+        "normal": {
+          "median_ms": 0.25345792528241873,
+          "p95_ms": 0.30670897103846073,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        },
+        "cached": {
+          "median_ms": 0.12943742331117392,
+          "p95_ms": 0.17854105681180954,
+          "warmup_calls": 20,
+          "timed_calls": 100
+        }
+      },
+      "activation_peak_graph_native": {
+        "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
+        "normal_bytes": 149914,
+        "normal_kib": 146.4,
+        "cached_encoder_bytes": 10138,
+        "cached_temporal_bytes": 3072,
+        "cached_embedding_ring_buffer_bytes": 1440,
+        "cached_bytes": 11578,
+        "cached_kib": 11.307
+      },
+      "onnx_artifact": {
+        "normal_kib": 50.191,
+        "cached_split_kib": 45.469
+      }
+    }
+  ]
+}
