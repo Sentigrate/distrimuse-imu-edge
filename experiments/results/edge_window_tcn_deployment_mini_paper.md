@@ -12,11 +12,11 @@ strongest deployment candidate for an application that can tolerate a 7 s
 look-ahead: static int8 retains a full-test macro-F1 of **0.6930** (float32:
 0.6935), and its real cached stream attains **0.6921** on the valid contexts.
 Caching reduces the actual ONNX Runtime-profiled activation-plus-cache working
-set from **146.40 KiB** for normal int8 execution to **11.31 KiB**. The cache
+set from **146.25 KiB** for normal int8 execution to **11.16 KiB**. The cache
 path is implemented in `distrimuse-ds-shared` and takes
-**0.125 ms** median host ONNX Runtime time per hop (100 warm-ups, then the
+**0.121 ms** median host ONNX Runtime time per hop (100 warm-ups, then the
 median of nine 500-call trials). The corresponding float32 cache measures
-45.47 KiB and 0.139 ms.
+40.41 KiB and 0.148 ms.
 
 ![Overview of the 15-window Edge Window TCN architecture](edge_window_tcn_context_report_assets/edge-window-tcn-architecture-overview-intro.png)
 
@@ -124,7 +124,30 @@ activations. Measurements include the resident float32 embedding ring buffer
 and ONNX Runtime-profiled node input/output activations, but exclude weights,
 scales, and process-wide allocator reservations. The 15-window int8 cached
 configuration is the accuracy-led streaming operating point: 0.6921
-valid-stream macro-F1 at 11.31 KiB.
+valid-stream macro-F1 at 11.16 KiB.
+
+#### Where the memory is spent
+
+![Per-stage activation memory, FLOPs, and parameter profile for the 15-window Edge Window TCN](edge_window_tcn_context_report_assets/edge-window-tcn-layer-profile.svg)
+
+Figure description — per-stage profile: this is the published 15-window
+float32 ONNX deployment path, broken into the shared CNN encoder, the resident
+embedding buffer, three temporal residual blocks, and the classification head.
+Normal inference encodes all 15 raw windows per hop, whereas cached inference
+encodes only the arriving window and reuses a `[1, 24, 15]` float32 embedding
+buffer. Consequently, the second encoder convolution is the normal-schedule
+bottleneck: its 15-window input/output activations occupy 585.00 KiB. The
+same operation occupies 39.00 KiB when it encodes one window; adding the
+1.41 KiB resident buffer yields the measured 40.41 KiB cached peak. The TCN
+still processes all 15 embeddings in both schedules, but contributes only a
+4.22 KiB residual-add peak per block. FLOPs are strict operations (`2 × MACs`)
+per 1 s hop; parameters are shared rather than duplicated by caching.
+
+The values are measured directly from ONNX Runtime’s activation-only profile
+fields (`activation_size + output_size`) for the published graphs. This avoids
+counting constant weight tensors as activations. The rendering and JSON record
+are produced by
+[`scripts/render_edge_window_tcn_layer_profile.py`](../../scripts/render_edge_window_tcn_layer_profile.py).
 
 ### Exported ONNX size
 
@@ -143,15 +166,15 @@ the configuration's zero-padded boundaries.
 
 | Context | Precision / scheduling | Test macro-F1 | Median host ONNX Runtime latency | Peak activation + cache | ONNX artifact size |
 |---|---|---:|---:|---:|---:|
-| Current only | float32, normal | 0.5123 (full) | 0.062 ms | 44.06 KiB | 63.14 KiB |
-| Current only | int8, normal | 0.4756 (full) | 0.049 ms | 9.90 KiB | 60.62 KiB |
-| Current only | int8, cached | 0.4756 (valid stream) | 0.046 ms | 9.99 KiB | 44.46 KiB |
-| Past 7 + current | float32, normal | 0.5517 (full) | 0.173 ms | 317.06 KiB | 95.43 KiB |
-| Past 7 + current | int8, normal | 0.5282 (full) | 0.147 ms | 78.15 KiB | 74.85 KiB |
-| Past 7 + current | int8, cached | 0.5279 (valid stream) | 0.121 ms | 10.65 KiB | 70.75 KiB |
-| Past 7 + current + future 7 | float32, normal | **0.6935** (full) | 0.291 ms | 590.06 KiB | 77.63 KiB |
-| Past 7 + current + future 7 | int8, normal | **0.6930** (full) | 0.266 ms | 146.40 KiB | 50.19 KiB |
-| Past 7 + current + future 7 | int8, cached | **0.6921** (valid stream) | **0.125 ms** | **11.31 KiB** | **45.47 KiB** |
+| Current only | float32, normal | 0.5123 (full) | 0.068 ms | 39.00 KiB | 63.14 KiB |
+| Current only | int8, normal | 0.4756 (full) | 0.056 ms | 9.75 KiB | 60.62 KiB |
+| Current only | int8, cached | 0.4756 (valid stream) | 0.052 ms | 9.84 KiB | 44.46 KiB |
+| Past 7 + current | float32, normal | 0.5517 (full) | 0.187 ms | 312.00 KiB | 95.43 KiB |
+| Past 7 + current | int8, normal | 0.5282 (full) | 0.163 ms | 78.00 KiB | 74.85 KiB |
+| Past 7 + current | int8, cached | 0.5279 (valid stream) | 0.111 ms | 10.50 KiB | 70.75 KiB |
+| Past 7 + current + future 7 | float32, normal | **0.6935** (full) | 0.328 ms | 585.00 KiB | 77.63 KiB |
+| Past 7 + current + future 7 | int8, normal | **0.6930** (full) | 0.266 ms | 146.25 KiB | 50.19 KiB |
+| Past 7 + current + future 7 | int8, cached | **0.6921** (valid stream) | **0.121 ms** | **11.16 KiB** | **45.47 KiB** |
 
 The strongest accuracy result is the 15-window model. Adding seven past
 windows raised macro-F1 from 0.5123 to 0.5517; adding seven future windows
@@ -161,8 +184,8 @@ models (−0.0366 for current-only and −0.0235 for past-plus-current).
 
 For the normal, non-cached schedule, more context raises peak activation memory
 linearly because all raw windows are sent through the CNN together. The
-15-window float32 run therefore measures 590.06 KiB at peak, which is larger
-than a 256 KiB target RAM budget. Normal int8 measures 146.40 KiB, still more
+15-window float32 run therefore measures 585.00 KiB at peak, which is larger
+than a 256 KiB target RAM budget. Normal int8 measures 146.25 KiB, still more
 than half of that budget.
 
 ## Why caching embeddings changes the memory story
@@ -175,8 +198,8 @@ CNN on all 15 windows. In streaming inference, the encoder processes only the
 newly arrived raw window. Its 24-D output is appended to a fixed-size buffer,
 the oldest embedding is discarded, and the unchanged TCN runs over that
 15-embedding buffer to classify the middle token. The right panel reports the
-measured 15-window working set: float32 falls from 590.06 to 45.47 KiB and
-int8 from 146.40 to 11.31 KiB when caching is enabled (normal versus cached).
+measured 15-window working set: float32 falls from 585.00 to 40.41 KiB and
+int8 from 146.25 to 11.16 KiB when caching is enabled (normal versus cached).
 The values include ONNX Runtime-profiled activations and the resident embedding
 ring buffer; each bar is labelled directly to keep the chart uncluttered.
 
@@ -192,12 +215,12 @@ validated class-for-class on the held-out valid stream.
 | 15-window future-context configuration | Normal schedule | Embedding-cached schedule | Change |
 |---|---:|---:|---:|
 | CNN encodes per 1 s hop | 15 windows | 1 arriving window | 15× less repeated CNN work |
-| Float32 peak activation + cache | 590.06 KiB | **45.47 KiB** | **13.0× lower** |
-| Float32 median host ONNX Runtime latency | 0.291 ms | **0.139 ms** | 2.09× faster |
+| Float32 peak activation + cache | 585.00 KiB | **40.41 KiB** | **14.5× lower** |
+| Float32 median host ONNX Runtime latency | 0.328 ms | **0.148 ms** | 2.22× faster |
 | Float32 macro-F1 | 0.6935 (full) | 0.6925 (valid stream) | boundary windows excluded |
-| Int8 peak activation + cache | 146.40 KiB | **11.31 KiB** | **12.9× lower** |
+| Int8 peak activation + cache | 146.25 KiB | **11.16 KiB** | **13.1× lower** |
 | Int8 macro-F1 | 0.6930 (full) | 0.6921 (valid stream) | boundary windows excluded |
-| Int8 median host ONNX Runtime latency | 0.266 ms | **0.125 ms** | 2.13× faster |
+| Int8 median host ONNX Runtime latency | 0.266 ms | **0.121 ms** | 2.20× faster |
 
 \*The cache intentionally makes no prediction where a real device lacks needed
 history or look-ahead. Thus, the cached F1 uses 10,292 real contexts rather
@@ -318,13 +341,13 @@ There are two sensible operating points.
 
 1. **Causal / no decision delay:** use **past 7 + current, float32 cached**.
    It reaches 0.5515 macro-F1 on valid streamed test contexts with no
-   look-ahead, 44.81 KiB measured activation-plus-cache peak, and 0.131 ms
+   look-ahead, 39.75 KiB measured activation-plus-cache peak, and 0.132 ms
    median host ONNX Runtime latency.
 
 2. **Best accuracy per peak-memory budget:** use **past 7 + current + future
    7, int8 with embedding caching**. It reaches 0.6921 macro-F1 on 10,292
    valid streamed test contexts with the lowest measured working set among the
-   highest-accuracy choices (11.31 KiB) and 0.125 ms median host latency. This
+   highest-accuracy choices (11.16 KiB) and 0.121 ms median host latency. This
    is the preferred final design when a 7 s decision delay is acceptable. It
    runs as `past7_future7_int8 --stream --streaming-cache` in
    `distrimuse-ds-shared`. Host measurements still are not a claim about a

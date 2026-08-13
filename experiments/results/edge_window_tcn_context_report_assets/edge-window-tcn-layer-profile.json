@@ -1,0 +1,139 @@
+{
+  "model": "past7_future7_fp32",
+  "normal_graph": "models/imu/weights/edge_window_tcn_wm025/past7_future7_fp32.onnx",
+  "cached_graphs": [
+    "models/imu/weights/edge_window_tcn_wm025/streaming/past7_future7_encoder_fp32.onnx",
+    "models/imu/weights/edge_window_tcn_wm025/streaming/past7_future7_temporal_fp32.onnx"
+  ],
+  "rows": [
+    {
+      "label": "Conv1D 6\u219216, k=7 + BN/ReLU",
+      "normal_shape": "[15, 16, 312]",
+      "cached_shape": "[1, 16, 312]",
+      "normal_bytes": 411840,
+      "cached_bytes": 27456,
+      "normal_flops": 6440640,
+      "cached_flops": 429376,
+      "parameters": 720,
+      "section": null
+    },
+    {
+      "label": "Conv1D 16\u219216, k=5 + BN/ReLU",
+      "normal_shape": "[15, 16, 312]",
+      "cached_shape": "[1, 16, 312]",
+      "normal_bytes": 599040,
+      "cached_bytes": 39936,
+      "normal_flops": 12131520,
+      "cached_flops": 808768,
+      "parameters": 1328,
+      "section": null
+    },
+    {
+      "label": "MaxPool1D, stride 2",
+      "normal_shape": "[15, 16, 156]",
+      "cached_shape": "[1, 16, 156]",
+      "normal_bytes": 449280,
+      "cached_bytes": 29952,
+      "normal_flops": 0,
+      "cached_flops": 0,
+      "parameters": 0,
+      "section": null
+    },
+    {
+      "label": "Conv1D 16\u219232, k=5 + BN/ReLU",
+      "normal_shape": "[15, 32, 156]",
+      "cached_shape": "[1, 32, 156]",
+      "normal_bytes": 449280,
+      "cached_bytes": 29952,
+      "normal_flops": 12132480,
+      "cached_flops": 808832,
+      "parameters": 2656,
+      "section": null
+    },
+    {
+      "label": "Adaptive average pool",
+      "normal_shape": "[15, 32, 1]",
+      "cached_shape": "[1, 32, 1]",
+      "normal_bytes": 301440,
+      "cached_bytes": 20096,
+      "normal_flops": 0,
+      "cached_flops": 0,
+      "parameters": 0,
+      "section": null
+    },
+    {
+      "label": "Linear projection 32\u219224",
+      "normal_shape": "[15, 24]",
+      "cached_shape": "[1, 24]",
+      "normal_bytes": 3360,
+      "cached_bytes": 224,
+      "normal_flops": 23760,
+      "cached_flops": 1584,
+      "parameters": 792,
+      "section": null
+    },
+    {
+      "label": "Embedding ring buffer (resident)",
+      "normal_shape": "\u2014",
+      "cached_shape": "[1, 24, 15]",
+      "normal_bytes": 0,
+      "cached_bytes": 1440,
+      "normal_flops": 0,
+      "cached_flops": 0,
+      "parameters": 0,
+      "section": null
+    },
+    {
+      "label": "Residual TCN block, dilation 1 (2\u00d7 Conv1D + LN)",
+      "normal_shape": "[1, 24, 15]",
+      "cached_shape": "[1, 24, 15]",
+      "normal_bytes": 4320,
+      "cached_bytes": 4320,
+      "normal_flops": 105312,
+      "cached_flops": 105312,
+      "parameters": 3600,
+      "section": null
+    },
+    {
+      "label": "Residual TCN block, dilation 2 (2\u00d7 Conv1D + LN)",
+      "normal_shape": "[1, 24, 15]",
+      "cached_shape": "[1, 24, 15]",
+      "normal_bytes": 4320,
+      "cached_bytes": 4320,
+      "normal_flops": 105312,
+      "cached_flops": 105312,
+      "parameters": 3600,
+      "section": null
+    },
+    {
+      "label": "Residual TCN block, dilation 4 (2\u00d7 Conv1D + LN)",
+      "normal_shape": "[1, 24, 15]",
+      "cached_shape": "[1, 24, 15]",
+      "normal_bytes": 4320,
+      "cached_bytes": 4320,
+      "normal_flops": 105312,
+      "cached_flops": 105312,
+      "parameters": 3600,
+      "section": null
+    },
+    {
+      "label": "Current-token select + LayerNorm + linear 24\u21929",
+      "normal_shape": "[1, 9]",
+      "cached_shape": "[1, 9]",
+      "normal_bytes": 192,
+      "cached_bytes": 192,
+      "normal_flops": 546,
+      "cached_flops": 546,
+      "parameters": 273,
+      "section": null
+    }
+  ],
+  "totals": {
+    "normal_peak_bytes": 599040,
+    "cached_peak_bytes": 41376,
+    "normal_flops": 31044882,
+    "cached_flops": 2365042,
+    "parameters": 16569,
+    "ring_buffer_bytes": 1440
+  }
+}

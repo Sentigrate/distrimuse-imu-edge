@@ -179,11 +179,14 @@ def _normal_predictions_for_cached_targets(
 def _activation_peak_bytes(path: Path) -> int:
     """Measure the graph's actual node I/O activation footprint with ORT profiling.
 
-    ONNX Runtime records the concrete type and shape of every executed CPU node.
-    We sum each node's activation inputs and outputs, then take the largest sum
-    (the report's established ping-pong-buffer definition). This captures the
-    real uint8/float transitions in static-PTQ graphs; weights, scales, and the
-    process-wide allocator reservation remain intentionally out of scope.
+    ONNX Runtime records ``activation_size`` and ``output_size`` for every
+    executed CPU node.  Their sum is the concrete input-plus-output activation
+    footprint for that node, so the maximum gives the report's established
+    ping-pong-buffer definition.  Do not reconstruct this from all input type
+    shapes: that list also contains constant weight tensors for convolution
+    nodes.  The runtime fields keep weights, scales, and process-wide allocator
+    reservation out of this activation metric while retaining real uint8/float
+    transitions in static-PTQ graphs.
     """
     graph = onnx.load(path).graph
     input_value = graph.input[0]
@@ -204,26 +207,14 @@ def _activation_peak_bytes(path: Path) -> int:
     finally:
         profile_path.unlink(missing_ok=True)
 
-    numpy_types = {"float": np.float32, "double": np.float64, "uint8": np.uint8, "int8": np.int8, "int32": np.int32, "int64": np.int64, "bool": np.bool_}
-
-    def payload_bytes(type_shapes: list[dict[str, list[int]]]) -> int:
-        total = 0
-        for type_shape in type_shapes:
-            for type_name, shape in type_shape.items():
-                dtype = numpy_types.get(type_name)
-                if dtype is None:
-                    continue
-                total += int(np.prod(shape)) * np.dtype(dtype).itemsize
-        return total
-
     peak = 0
     for event in events:
         args = event.get("args", {})
-        if "input_type_shape" not in args or "output_type_shape" not in args:
+        if "activation_size" not in args or "output_size" not in args:
             continue
         peak = max(
             peak,
-            payload_bytes(args["input_type_shape"]) + payload_bytes(args["output_type_shape"]),
+            int(args["activation_size"]) + int(args["output_size"]),
         )
     if peak <= 0:
         raise ValueError(f"ONNX Runtime profiling yielded no activation tensors for {path}")

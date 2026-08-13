@@ -29,15 +29,15 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.061728875152766705,
-          "p95_ms": 0.10270788334310055,
+          "median_ms": 0.06781262345612049,
+          "p95_ms": 0.10958290658891201,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.050749396905303,
-          "p95_ms": 0.09112502448260784,
+          "median_ms": 0.05887448787689209,
+          "p95_ms": 0.0991669949144125,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
@@ -45,13 +45,13 @@
       },
       "activation_peak_graph_native": {
         "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
-        "normal_bytes": 45120,
-        "normal_kib": 44.062,
-        "cached_encoder_bytes": 45120,
-        "cached_temporal_bytes": 384,
+        "normal_bytes": 39936,
+        "normal_kib": 39.0,
+        "cached_encoder_bytes": 39936,
+        "cached_temporal_bytes": 288,
         "cached_embedding_ring_buffer_bytes": 96,
-        "cached_bytes": 45216,
-        "cached_kib": 44.156
+        "cached_bytes": 40032,
+        "cached_kib": 39.094
       },
       "onnx_artifact": {
         "normal_kib": 63.141,
@@ -77,15 +77,15 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.04854192957282066,
-          "p95_ms": 0.09629200212657452,
+          "median_ms": 0.05595793481916189,
+          "p95_ms": 0.12333295308053493,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.045583583414554596,
-          "p95_ms": 0.08504209108650684,
+          "median_ms": 0.05183299072086811,
+          "p95_ms": 0.09725010022521019,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
@@ -93,13 +93,13 @@
       },
       "activation_peak_graph_native": {
         "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
-        "normal_bytes": 10138,
-        "normal_kib": 9.9,
-        "cached_encoder_bytes": 10138,
-        "cached_temporal_bytes": 384,
+        "normal_bytes": 9984,
+        "normal_kib": 9.75,
+        "cached_encoder_bytes": 9984,
+        "cached_temporal_bytes": 192,
         "cached_embedding_ring_buffer_bytes": 96,
-        "cached_bytes": 10234,
-        "cached_kib": 9.994
+        "cached_bytes": 10080,
+        "cached_kib": 9.844
       },
       "onnx_artifact": {
         "normal_kib": 60.621,
@@ -125,15 +125,15 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.1729584764689207,
-          "p95_ms": 0.24174991995096207,
+          "median_ms": 0.18702098168432713,
+          "p95_ms": 0.2919998951256275,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.13068760745227337,
-          "p95_ms": 0.15829107724130154,
+          "median_ms": 0.13189599849283695,
+          "p95_ms": 0.1960410736501217,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
@@ -141,13 +141,13 @@
       },
       "activation_peak_graph_native": {
         "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
-        "normal_bytes": 324672,
-        "normal_kib": 317.062,
-        "cached_encoder_bytes": 45120,
-        "cached_temporal_bytes": 9312,
+        "normal_bytes": 319488,
+        "normal_kib": 312.0,
+        "cached_encoder_bytes": 39936,
+        "cached_temporal_bytes": 2304,
         "cached_embedding_ring_buffer_bytes": 768,
-        "cached_bytes": 45888,
-        "cached_kib": 44.812
+        "cached_bytes": 40704,
+        "cached_kib": 39.75
       },
       "onnx_artifact": {
         "normal_kib": 95.435,
@@ -173,15 +173,15 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.1471459399908781,
-          "p95_ms": 0.2088751643896103,
+          "median_ms": 0.16312487423419952,
+          "p95_ms": 0.26145903393626213,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.12056261766701937,
-          "p95_ms": 0.14487490989267826,
+          "median_ms": 0.11077045928686857,
+          "p95_ms": 0.17245905473828316,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
@@ -189,13 +189,13 @@
       },
       "activation_peak_graph_native": {
         "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
-        "normal_bytes": 80026,
-        "normal_kib": 78.15,
-        "cached_encoder_bytes": 10138,
-        "cached_temporal_bytes": 2352,
+        "normal_bytes": 79872,
+        "normal_kib": 78.0,
+        "cached_encoder_bytes": 9984,
+        "cached_temporal_bytes": 2304,
         "cached_embedding_ring_buffer_bytes": 768,
-        "cached_bytes": 10906,
-        "cached_kib": 10.65
+        "cached_bytes": 10752,
+        "cached_kib": 10.5
       },
       "onnx_artifact": {
         "normal_kib": 74.85,
@@ -221,15 +221,15 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.2913125790655613,
-          "p95_ms": 0.3635419998317957,
+          "median_ms": 0.3279580269008875,
+          "p95_ms": 0.555083155632019,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.13891642447561026,
-          "p95_ms": 0.20491681061685085,
+          "median_ms": 0.14770857524126768,
+          "p95_ms": 0.2370830625295639,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
@@ -237,13 +237,13 @@
       },
       "activation_peak_graph_native": {
         "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
-        "normal_bytes": 604224,
-        "normal_kib": 590.062,
-        "cached_encoder_bytes": 45120,
-        "cached_temporal_bytes": 9888,
+        "normal_bytes": 599040,
+        "normal_kib": 585.0,
+        "cached_encoder_bytes": 39936,
+        "cached_temporal_bytes": 4320,
         "cached_embedding_ring_buffer_bytes": 1440,
-        "cached_bytes": 46560,
-        "cached_kib": 45.469
+        "cached_bytes": 41376,
+        "cached_kib": 40.406
       },
       "onnx_artifact": {
         "normal_kib": 77.634,
@@ -269,15 +269,15 @@
       },
       "latency_host_onnxruntime": {
         "normal": {
-          "median_ms": 0.26618747506290674,
-          "p95_ms": 0.34433300606906414,
+          "median_ms": 0.2659374149516225,
+          "p95_ms": 0.4420001059770584,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
         },
         "cached": {
-          "median_ms": 0.12539559975266457,
-          "p95_ms": 0.16154209151864052,
+          "median_ms": 0.12083339970558882,
+          "p95_ms": 0.18616602756083012,
           "warmup_calls": 100,
           "timed_calls_per_trial": 500,
           "timing_trials": 9
@@ -285,13 +285,13 @@
       },
       "activation_peak_graph_native": {
         "definition": "largest ONNX Runtime-profiled node input+output activation footprint; weights/scales excluded",
-        "normal_bytes": 149914,
-        "normal_kib": 146.4,
-        "cached_encoder_bytes": 10138,
-        "cached_temporal_bytes": 3072,
+        "normal_bytes": 149760,
+        "normal_kib": 146.25,
+        "cached_encoder_bytes": 9984,
+        "cached_temporal_bytes": 2880,
         "cached_embedding_ring_buffer_bytes": 1440,
-        "cached_bytes": 11578,
-        "cached_kib": 11.307
+        "cached_bytes": 11424,
+        "cached_kib": 11.156
       },
       "onnx_artifact": {
         "normal_kib": 50.191,
