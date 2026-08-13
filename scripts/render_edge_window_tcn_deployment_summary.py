@@ -148,15 +148,13 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
         fontsize=9.3,
     )
 
-    # A — latency. All four deployed paths are measured in ONNX Runtime.
+    # A — latency. The presentation comparison keeps the three primary forms.
     ax = axes[0]
     for row in rows:
         c = row["colour"]
-        ax.plot([row["latency_fp32_normal"], row["latency_fp32_cached"]], [row["f1_fp32"], row["f1_fp32_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
         ax.plot([row["latency_int8_normal"], row["latency_int8_cached"]], [row["f1_int8"], row["f1_int8_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
         dot(ax, row["latency_fp32_normal"], row["f1_fp32"], colour=c, marker="o")
         dot(ax, row["latency_int8_normal"], row["f1_int8"], colour=c, marker="s")
-        dot(ax, row["latency_fp32_cached"], row["f1_fp32_cached"], colour=c, marker="v")
         dot(ax, row["latency_int8_cached"], row["f1_int8_cached"], colour=c, marker="^")
     add_context_labels(ax, rows, "latency_fp32_normal", "f1_fp32", log_x=True)
     ax.set_title("A. CPU latency", loc="left", weight="bold", fontsize=11)
@@ -168,11 +166,9 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
     ax = axes[1]
     for row in rows:
         c = row["colour"]
-        ax.plot([row["memory_fp32_normal"], row["memory_fp32_cached"]], [row["f1_fp32"], row["f1_fp32_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
         ax.plot([row["memory_int8_normal"], row["memory_int8_cached"]], [row["f1_int8"], row["f1_int8_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
         dot(ax, row["memory_fp32_normal"], row["f1_fp32"], colour=c, marker="o")
         dot(ax, row["memory_int8_normal"], row["f1_int8"], colour=c, marker="s")
-        dot(ax, row["memory_fp32_cached"], row["f1_fp32_cached"], colour=c, marker="v")
         dot(ax, row["memory_int8_cached"], row["f1_int8_cached"], colour=c, marker="^")
     best = rows[-1]
     ax.scatter(
@@ -205,11 +201,9 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
     ax = axes[2]
     for row in rows:
         c = row["colour"]
-        ax.plot([row["size_fp32_kib"], row["size_fp32_cached_kib"]], [row["f1_fp32"], row["f1_fp32_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
         ax.plot([row["size_int8_kib"], row["size_int8_cached_kib"]], [row["f1_int8"], row["f1_int8_cached"]], color=c, alpha=0.45, linewidth=1.3, zorder=2)
         dot(ax, row["size_fp32_kib"], row["f1_fp32"], colour=c, marker="o")
         dot(ax, row["size_int8_kib"], row["f1_int8"], colour=c, marker="s")
-        dot(ax, row["size_fp32_cached_kib"], row["f1_fp32_cached"], colour=c, marker="v")
         dot(ax, row["size_int8_cached_kib"], row["f1_int8_cached"], colour=c, marker="^")
     add_context_labels(ax, rows, "size_fp32_kib", "f1_fp32", log_x=False)
     ax.set_title("C. Exported ONNX size", loc="left", weight="bold", fontsize=11)
@@ -237,10 +231,6 @@ def deployment_tradeoffs(rows: list[dict], path: Path) -> None:
             linestyle="",
             markersize=7,
             label="int8, cached embeddings",
-        ),
-        Line2D(
-            [0], [0], marker="v", color=INK, markerfacecolor=INK,
-            linestyle="", markersize=7, label="float32, cached embeddings",
         ),
     ]
     fig.legend(

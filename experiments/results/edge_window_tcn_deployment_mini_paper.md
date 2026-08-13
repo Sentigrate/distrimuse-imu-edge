@@ -59,8 +59,9 @@ they should not be interpreted as different learned model capacities.
 ![Test macro-F1 versus latency, activation memory, and ONNX artifact size](edge_window_tcn_context_report_assets/edge-window-tcn-deployment-tradeoffs.svg)
 
 Figure description: colour denotes temporal context; circles are normal
-float32, squares are normal static-int8, down-triangles are cached float32,
-and up-triangles are cached static-int8. Every point is measured from the
+float32, squares are normal static-int8, and up-triangles are cached static
+int8. The figure deliberately focuses on these three deployment forms: the
+uncompressed baseline, compression, and the final compressed cache. Every point is measured from the
 published shared ONNX artifacts. Cached points use only real, non-padded
 contexts; normal points include the configuration's zero-padded boundaries.
 Panel B includes the resident float32 embedding ring buffer as well as actual
@@ -72,15 +73,12 @@ and split artifact sizes.
 | Context | Precision / scheduling | Test macro-F1 | Median host ONNX Runtime latency | Peak activation + cache | ONNX artifact size |
 |---|---|---:|---:|---:|---:|
 | Current only | float32, normal | 0.5123 (full) | 0.058 ms | 44.06 KiB | 63.14 KiB |
-| Current only | float32, cached | 0.5123 (valid stream) | 0.056 ms | 44.16 KiB | 51.66 KiB |
 | Current only | int8, normal | 0.4756 (full) | 0.087 ms | 9.90 KiB | 60.62 KiB |
 | Current only | int8, cached | 0.4756 (valid stream) | 0.047 ms | 9.99 KiB | 44.46 KiB |
 | Past 7 + current | float32, normal | 0.5517 (full) | 0.158 ms | 317.06 KiB | 95.43 KiB |
-| Past 7 + current | float32, cached | 0.5515 (valid stream) | 0.103 ms | 44.81 KiB | 92.60 KiB |
 | Past 7 + current | int8, normal | 0.5282 (full) | 0.172 ms | 78.15 KiB | 74.85 KiB |
 | Past 7 + current | int8, cached | 0.5279 (valid stream) | 0.134 ms | 10.65 KiB | 70.75 KiB |
 | Past 7 + current + future 7 | float32, normal | **0.6935** (full) | 0.272 ms | 590.06 KiB | 77.63 KiB |
-| Past 7 + current + future 7 | float32, cached | 0.6925 (valid stream) | 0.152 ms | 45.47 KiB | 74.80 KiB |
 | Past 7 + current + future 7 | int8, normal | **0.6930** (full) | 0.253 ms | 146.40 KiB | 50.19 KiB |
 | Past 7 + current + future 7 | int8, cached | **0.6921** (valid stream) | **0.129 ms** | **11.31 KiB** | **45.47 KiB** |
 
