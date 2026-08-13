@@ -65,6 +65,40 @@ model capacity or peak working memory.
 
 ## Deployment trade-offs
 
+### How these metrics are computed
+
+All values below are produced by
+[`scripts/benchmark_shared_onnx_streaming.py`](../../scripts/benchmark_shared_onnx_streaming.py)
+from the published `distrimuse-ds-shared` ONNX artifacts. The script first
+checks that the window cache matches the configured held-out people in
+[`configs/split.yaml`](../../configs/split.yaml), normalises windows with the
+shared package configuration, and writes the reproducible measurement record
+to
+[`shared_onnx_streaming_benchmark.json`](edge_window_tcn_context_report_assets/shared_onnx_streaming_benchmark.json).
+
+- **Macro-F1:** `sklearn.metrics.f1_score(..., average="macro")` over the
+  held-out labels. Normal inference evaluates all 10,628 targets using the
+  configured zero-padding at recording boundaries. Cached inference emits only
+  genuine live-stream contexts, then recomputes F1 on those targets and checks
+  its predicted classes against normal inference on exactly the same contexts.
+- **CPU latency:** batch-one ONNX Runtime inference on one held-out input. Each
+  path receives 100 warm-up calls, followed by nine independent trials of 500
+  calls; the reported latency is the median of the nine trial medians. This is
+  a host-CPU comparison, not a microcontroller timing claim.
+- **Peak activation plus cache:** ONNX Runtime profiling records the concrete
+  type and shape of every executed node input and output. The metric is the
+  largest single-node input-plus-output footprint. Cached inference adds the
+  resident ring buffer of `context length × 24-D float32 embeddings`; weights,
+  quantization constants, and process-wide allocator reservations are
+  intentionally excluded.
+- **Exported ONNX size:** the on-disk byte size of the combined graph for
+  normal inference, or the sum of the separately deployed encoder and temporal
+  graphs for cached inference.
+
+The figure layout and arrow semantics are defined in
+[`scripts/render_edge_window_tcn_deployment_summary.py`](../../scripts/render_edge_window_tcn_deployment_summary.py),
+which reads that JSON record rather than recomputing metrics.
+
 ### CPU latency
 
 ![Test macro-F1 versus CPU latency](edge_window_tcn_context_report_assets/edge-window-tcn-latency-tradeoff.svg)
