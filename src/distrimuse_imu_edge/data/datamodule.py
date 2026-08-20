@@ -167,8 +167,11 @@ class IMUEdgeDataModule:
             hop_size_s=self.config.hop_size_s,
             sensor_cols=self.config.sensor_cols,
             window_manifest=manifest,
+            fs=self.config.fs,
         )
-        save_window_cache(cache_path, x=arrays[0], y=arrays[1], pids=arrays[2], sids=arrays[3], starts=arrays[4])
+        save_window_cache(
+            cache_path, x=arrays[0], y=arrays[1], pids=arrays[2], sids=arrays[3], starts=arrays[4]
+        )
         return arrays
 
     def train_loader(self) -> DataLoader:

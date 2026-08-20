@@ -13,6 +13,7 @@ DEFAULT_SCENARIO_IDS = [1, 2, 3, 4, 5, 6]
 DEFAULT_SENSOR_COLS = ("acc_x", "acc_y", "acc_z", "gyr_x", "gyr_y", "gyr_z")
 DEFAULT_WINDOW_SIZE_S = 3.0
 DEFAULT_HOP_SIZE_S = 1.0
+DEFAULT_FS = 52.0
 
 
 @dataclass(slots=True)
@@ -37,6 +38,7 @@ class DataConfig:
     window_cache_dir: Path = Path("cache/windows")
     window_size_s: float = DEFAULT_WINDOW_SIZE_S
     hop_size_s: float = DEFAULT_HOP_SIZE_S
+    fs: float = DEFAULT_FS
     context_len: int = 8
     future_context_len: int = 0
     task_col: str = "big_movement"
