@@ -1,0 +1,56 @@
+defaults:
+  split: configs/split.yaml
+
+data:
+  campaign: dc-extern-2026-01
+  processing_version: null
+  split_dir: ../distrimuse-early-fusion/cache/datasets/v35_52hz/imu
+  manifest_path: null
+  cache_dir: cache
+  window_cache_dir: cache/windows
+  window_size_s: 3.0
+  hop_size_s: 1.0
+  context_len: 8
+  future_context_len: 0
+  task_col: big_movement
+  n_classes: 9
+  sensor_cols: [acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z]
+  batch_size: 128
+  num_workers: 4
+  reuse_window_cache: true
+
+train:
+  max_epochs: 30
+  lr: 0.001
+  weight_decay: 0.0001
+  seed: 123
+  device: auto
+  early_stop_patience: 8
+  output_root: experiments/results
+  run_name: null
+  width_mult: 0.5
+  log_every_n_batches: 10
+  distillation:
+    temperature: 4.0
+    alpha: 0.5
+
+# Hardware assumption for the analytic energy estimate in model_stats.json.
+# `nrf54l15_m33_128mhz` is the actual deployment target (see
+# DEPLOYMENT_HARDWARE.md); stm32l4_m4f_80mhz, stm32u5_m33_160mhz, and
+# ethos_u55_64_200mhz are kept as contrast cases. Any numeric field may be
+# overridden alongside `profile` once you have measured your own board, e.g.:
+#   energy:
+#     profile: nrf54l15_m33_128mhz
+#     p_active_mw: 9.4
+# The estimate is proportional to MACs and covers compute only — it excludes
+# sensor sampling and radio power, so it ranks models exactly as gmacs does and
+# is not a device-level battery projection. See evaluation/energy.py.
+energy:
+  profile: nrf54l15_m33_128mhz
+
+benchmark:
+  models:
+    - teacher_causal_cnn
+    - edge_window_gru
+    - edge_window_tcn
+  width_multipliers: [0.25, 0.5, 1.0]
